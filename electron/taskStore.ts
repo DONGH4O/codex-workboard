@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { DEFAULT_CATEGORIES, inferConversationCategory } from './classifier.js';
+import { DEFAULT_CATEGORIES, inferConversationCategory, parentConversationId } from './classifier.js';
 import { assertReviewSeparation, assertWritableSubstatus, defaultSubstatus, laneForDecision, type Lane, type Substatus } from './stateMachine.js';
 
 export type Priority = 'low' | 'medium' | 'high';
@@ -177,6 +177,28 @@ export class TaskStore {
 
   syncConversations(input: Array<Record<string, unknown>>): Conversation[] {
     const syncedAt = new Date().toISOString();
+    const byId = new Map(input.flatMap((thread) => typeof thread.id === 'string' && thread.id ? [[thread.id, thread] as const] : []));
+    const existingManual = new Map(
+      (this.db.prepare("SELECT id,category FROM conversations WHERE classification_source='manual'").all() as Array<{ id: string; category: string }>)
+        .map((row) => [row.id, row.category] as const),
+    );
+    const categoryCache = new Map<string, string>();
+    const resolveCategory = (thread: Record<string, unknown>, visiting = new Set<string>()): string => {
+      const id = typeof thread.id === 'string' ? thread.id : '';
+      if (id && categoryCache.has(id)) return categoryCache.get(id)!;
+      if (id && existingManual.has(id)) return existingManual.get(id)!;
+      if (id && visiting.has(id)) return inferConversationCategory(thread);
+      if (id) visiting.add(id);
+      const parentId = parentConversationId(thread);
+      const parent = parentId ? byId.get(parentId) : undefined;
+      const category = parent
+        ? resolveCategory(parent, visiting)
+        : parentId && existingManual.has(parentId)
+          ? existingManual.get(parentId)!
+          : inferConversationCategory(thread);
+      if (id) categoryCache.set(id, category);
+      return category;
+    };
     const statement = this.db.prepare(`INSERT INTO conversations (
       id,name,preview,cwd,runtime_status,archived,is_pinned,model_provider,source_kind,created_at_epoch,updated_at_epoch,
       category,classification_source,tags_json,note,available,synced_at
@@ -206,7 +228,7 @@ export class TaskStore {
           : thread.status && typeof thread.status === 'object' && typeof (thread.status as Record<string, unknown>).type === 'string'
             ? String((thread.status as Record<string, unknown>).type)
             : 'notLoaded';
-        const category = inferConversationCategory(thread);
+        const category = resolveCategory(thread);
         statement.run(
           id,
           typeof thread.name === 'string' ? thread.name : null,

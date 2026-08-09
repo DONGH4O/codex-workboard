@@ -43,8 +43,11 @@ function categoryTone(category: string): string {
     '人民币利率': 'mint',
     '外币利率': 'cyan',
     '知识库': 'violet',
+    '资产负债与风险': 'coral',
+    '同业对标': 'amber',
     '报告与材料': 'amber',
     '交易与回测': 'coral',
+    '硬件与系统': 'slate',
     '未分类': 'gray',
   };
   return tones[category] ?? 'slate';

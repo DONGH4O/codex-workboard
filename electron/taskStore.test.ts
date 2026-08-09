@@ -69,6 +69,25 @@ describe('TaskStore', () => {
     db.close();
   });
 
+  it('makes subagents inherit the parent conversation category', () => {
+    const db = store();
+    const parent = { id: 'parent-thread', name: '升级 Codex 工作面板', archived: false, updatedAt: 20 };
+    const child = {
+      id: 'child-thread',
+      preview: '分析人民币利率预测模型',
+      archived: false,
+      updatedAt: 21,
+      source: { subAgent: { thread_spawn: { parent_thread_id: 'parent-thread' } } },
+    };
+    db.syncConversations([parent, child]);
+    expect(db.listConversations().find((thread) => thread.id === 'child-thread')?.category).toBe('Codex 工作流');
+
+    db.updateConversation('parent-thread', { category: '我的重点' });
+    db.syncConversations([parent, child]);
+    expect(db.listConversations().find((thread) => thread.id === 'child-thread')?.category).toBe('我的重点');
+    db.close();
+  });
+
   it('migrates tasks and audit events from a valid legacy database', () => {
     const legacyDir = mkdtempSync(path.join(tmpdir(), 'codex-taskboard-legacy-'));
     const targetDir = mkdtempSync(path.join(tmpdir(), 'codex-workboard-target-'));
