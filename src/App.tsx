@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Archive,
+  AlertTriangle,
   ArrowUpRight,
+  Bell,
   Bot,
   Check,
+  CheckCircle2,
   ChevronDown,
   CircleDot,
   ClipboardCheck,
@@ -23,6 +26,7 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
+  TrendingUp,
   UserRound,
   X,
 } from 'lucide-react';
@@ -134,6 +138,13 @@ function App() {
     return tasks.filter((task) => `${task.title} ${task.description} ${task.projectPath ?? ''}`.toLocaleLowerCase().includes(query));
   }, [filter, tasks]);
 
+  const metrics = useMemo(() => ({
+    planned: tasks.filter((task) => task.lane === 'plan').length,
+    running: tasks.filter((task) => task.lane === 'execution').length,
+    completed: tasks.filter((task) => task.substatus === 'accepted' || task.substatus === 'closed').length,
+    atRisk: tasks.filter((task) => task.substatus === 'blocked' || task.substatus === 'rework').length,
+  }), [tasks]);
+
   async function createTask(input: CreateTaskInput) {
     try {
       const task = await window.codexTaskboard.createTask(input);
@@ -171,7 +182,7 @@ function App() {
         </div>
 
         <nav className="primary-nav" aria-label="主导航">
-          <button type="button"><Plus size={17} />新任务</button>
+          <button type="button" onClick={() => setCreateOpen(true)}><Plus size={17} />新任务</button>
           <button type="button"><MessageSquareText size={17} />全部对话<span className="nav-count">{threads.length}</span></button>
           <button type="button" className="active"><LayoutDashboard size={17} />任务看板</button>
           <button type="button"><Clock3 size={17} />已安排</button>
@@ -202,22 +213,30 @@ function App() {
       <main className="workspace">
         <header className="topbar">
           <div>
-            <div className="eyebrow">任务驱动的 Codex 工作流</div>
-            <h1>任务看板</h1>
+            <h1>任务管理</h1>
+            <div className="eyebrow">高效规划 · 智能协同 · 结果驱动</div>
           </div>
           <div className="top-actions">
             <label className="search-box">
               <Search size={15} />
-              <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索任务" aria-label="搜索任务" />
+              <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索任务、项目或对话…" aria-label="搜索任务" />
               <kbd>⌘ K</kbd>
             </label>
             <button type="button" className="icon-button" onClick={() => void bootstrap()} title="刷新"><RefreshCw size={16} /></button>
+            <button type="button" className="icon-button notification-button" title="通知"><Bell size={16} /><span /></button>
             <button type="button" className="primary-button" onClick={() => setCreateOpen(true)}><Plus size={16} />新增任务</button>
           </div>
         </header>
 
+        <section className="metric-grid" aria-label="任务概览">
+          <MetricCard tone="plan" icon={ClipboardCheck} label="计划中" value={metrics.planned} detail="等待梳理与领取" />
+          <MetricCard tone="execution" icon={TrendingUp} label="执行中" value={metrics.running} detail="已进入工作流" />
+          <MetricCard tone="complete" icon={CheckCircle2} label="已闭环" value={metrics.completed} detail="已验收或回顾" />
+          <MetricCard tone="risk" icon={AlertTriangle} label="风险任务" value={metrics.atRisk} detail="阻塞或待返工" />
+        </section>
+
         <div className="board-toolbar">
-          <div className="board-summary"><strong>{tasks.length}</strong> 个任务 <span /> <strong>{tasks.filter((t) => t.substatus === 'pending_review').length}</strong> 个待验收</div>
+          <div><strong>任务看板</strong><span className="board-summary"><b>{tasks.length}</b> 个任务 · <b>{tasks.filter((t) => t.substatus === 'pending_review').length}</b> 个待验收</span></div>
           <button type="button" className="quiet-button"><ListFilter size={15} />筛选</button>
         </div>
 
@@ -253,6 +272,21 @@ function App() {
       {createOpen && <CreateTaskModal threads={threads} onClose={() => setCreateOpen(false)} onCreate={createTask} />}
       {notice && <div className={`toast ${notice.tone}`} role="status">{notice.tone === 'success' ? <Check size={16} /> : <CircleDot size={16} />}{notice.text}<button type="button" onClick={() => setNotice(null)}><X size={14} /></button></div>}
     </div>
+  );
+}
+
+function MetricCard({ tone, icon: Icon, label, value, detail }: {
+  tone: 'plan' | 'execution' | 'complete' | 'risk';
+  icon: typeof Inbox;
+  label: string;
+  value: number;
+  detail: string;
+}) {
+  return (
+    <article className={`metric-card metric-${tone}`}>
+      <div><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>
+      <span className="metric-icon"><Icon size={21} strokeWidth={1.8} /></span>
+    </article>
   );
 }
 
@@ -449,6 +483,14 @@ function TaskPanel({ task, thread, onClose, onTaskChange, onNotice }: {
             <div className="property-row"><span><Link2 size={14} />对话</span><button type="button" className="inline-link" disabled={!thread} onClick={() => setTab('thread')}>{thread ? threadTitle(thread).slice(0, 25) : '未关联'}</button></div>
           </div>
           <div className="detail-section"><h3>验收标准</h3><textarea className="criteria-box" defaultValue={task.acceptanceCriteria} placeholder="尚未填写验收标准" onBlur={(event) => void patchTask({ acceptanceCriteria: event.target.value })} /></div>
+          <div className="insight-box">
+            <div className="insight-title"><Sparkles size={16} /><strong>智能验收提示</strong></div>
+            <ul>
+              <li className={task.acceptanceCriteria ? 'done' : ''}>{task.acceptanceCriteria ? '验收标准已记录' : '补充可验证的验收标准'}</li>
+              <li className={task.threadId ? 'done' : ''}>{task.threadId ? '执行对话可追溯' : '关联执行该任务的 Codex 对话'}</li>
+              <li className={task.auditor && task.auditor !== task.executor ? 'done' : ''}>{task.auditor && task.auditor !== task.executor ? '独立验收角色已分离' : '指定与执行人不同的审计角色'}</li>
+            </ul>
+          </div>
           {task.lane === 'review' && (
             <div className="review-box">
               <div className="review-title"><ShieldCheck size={17} /><div><strong>独立验收</strong><span>验收人与执行人不能相同</span></div></div>

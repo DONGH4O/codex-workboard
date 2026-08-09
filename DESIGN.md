@@ -2,31 +2,33 @@
 
 ## Scene
 
-A macOS knowledge worker under neutral office light scans many parallel tasks without visual noise.
+A macOS knowledge worker scans many parallel Codex tasks in a bright, cool-blue operations cockpit. The visual reference is an airy enterprise task manager with summary metrics, a central workflow, and a persistent intelligence panel.
 
 ## Visual language
 
 - Familiar three-pane desktop layout: navigation, board, contextual task/conversation panel.
-- White canvas, quiet cool-gray navigation, hairline dividers, almost no shadows.
-- Indigo-violet is a small navigational accent, not the visual subject.
-- Amber communicates active execution; teal communicates independent review.
+- Icy blue-gray canvas, translucent white hierarchy surfaces, hairline dividers, and shallow shadows only where elevation communicates layering.
+- Clear blue is the primary action and navigation accent.
+- Cyan communicates planning, mint communicates active execution, violet communicates accepted work, and coral communicates blockers or rework.
 - System typeface and compact spacing keep the product dense but readable.
+- Top metrics answer workload health at a glance; they are operational summaries, not decorative cards.
+- The right panel combines task properties, linked conversation, intelligent acceptance prompts, and independent audit actions.
 
 ## Tokens
 
 ```css
 --bg: oklch(1 0 0);
---surface: oklch(0.975 0.004 294);
---sidebar: oklch(0.965 0.006 294);
---ink: oklch(0.20 0.015 294);
---muted: oklch(0.48 0.012 294);
---line: oklch(0.90 0.006 294);
---primary: oklch(0.50 0.12 294);
---primary-soft: oklch(0.94 0.028 294);
---execution: oklch(0.68 0.14 74);
---execution-soft: oklch(0.96 0.035 80);
---review: oklch(0.56 0.10 174);
---review-soft: oklch(0.96 0.026 174);
+--surface: oklch(0.974 0.012 238);
+--sidebar: oklch(0.958 0.018 238);
+--ink: oklch(0.24 0.025 246);
+--muted: oklch(0.51 0.025 246);
+--line: oklch(0.89 0.018 238);
+--primary: oklch(0.61 0.18 253);
+--primary-soft: oklch(0.94 0.038 246);
+--execution: oklch(0.72 0.14 165);
+--execution-soft: oklch(0.95 0.045 165);
+--review: oklch(0.62 0.15 294);
+--review-soft: oklch(0.95 0.035 294);
 --danger: oklch(0.56 0.18 27);
 ```
 
@@ -48,4 +50,3 @@ A macOS knowledge worker under neutral office light scans many parallel tasks wi
 - Clicking a card opens its task details and linked Codex conversation in the right panel.
 - Review actions remain visible and require an auditor identity different from the executor.
 - The create-task flow is a focused modal with title first and advanced fields progressively disclosed.
-
