@@ -35,4 +35,54 @@ describe('TaskStore', () => {
     expect(rework.substatus).toBe('rework');
     db.close();
   });
+
+  it('rejects acceptance bypasses and requires an executor', () => {
+    const db = store();
+    expect(() => db.create({ title: '绕过验收', lane: 'review', substatus: 'accepted' })).toThrow('只能通过独立审计');
+    const unassigned = db.create({ title: '无人执行', lane: 'review' });
+    expect(() => db.review(unassigned.id, { auditor: '审计角色', decision: 'accepted', note: '通过' })).toThrow('必须先指定执行人');
+    const assigned = db.create({ title: '锁定结果', lane: 'review', executor: '执行角色' });
+    const accepted = db.review(assigned.id, { auditor: '审计角色', decision: 'accepted', note: '证据齐全' });
+    expect(() => db.update(accepted.id, { executor: '审计角色' })).toThrow('任务已锁定');
+    expect(() => db.update(accepted.id, { lane: 'execution', substatus: 'rework' })).toThrow('任务已锁定');
+    db.close();
+  });
+
+  it('syncs active and archived conversations without overwriting manual classification', () => {
+    const db = store();
+    db.syncConversations([
+      { id: 'thread-active', name: '升级 Codex 工作面板', archived: false, updatedAt: 20, status: { type: 'active' } },
+      { id: 'thread-archive', preview: '美元 SOFR 历史研究', archived: true, updatedAt: 10, status: { type: 'notLoaded' }, source: { subAgent: { thread_spawn: { depth: 1 } } } },
+    ]);
+    expect(db.listConversations().map((thread) => [thread.id, thread.category, thread.archived])).toEqual([
+      ['thread-active', 'Codex 工作流', false],
+      ['thread-archive', '外币利率', true],
+    ]);
+    expect(db.listConversations().find((thread) => thread.id === 'thread-archive')?.sourceKind).toBe('subAgentThreadSpawn');
+
+    db.updateConversation('thread-active', { category: '我的重点', tags: ['正式版'], note: '人工维护' });
+    db.syncConversations([{ id: 'thread-active', name: '普通项目', archived: false, updatedAt: 30 }]);
+    const updated = db.listConversations().find((thread) => thread.id === 'thread-active');
+    expect(updated).toMatchObject({ category: '我的重点', classificationSource: 'manual', tags: ['正式版'], note: '人工维护' });
+    expect(db.listConversations()).toHaveLength(1);
+    expect(db.getSyncState()).toMatchObject({ lastTotal: 1 });
+    db.close();
+  });
+
+  it('migrates tasks and audit events from a valid legacy database', () => {
+    const legacyDir = mkdtempSync(path.join(tmpdir(), 'codex-taskboard-legacy-'));
+    const targetDir = mkdtempSync(path.join(tmpdir(), 'codex-workboard-target-'));
+    testDirs.push(legacyDir, targetDir);
+    const legacyPath = path.join(legacyDir, 'taskboard.sqlite');
+    const legacy = new TaskStore(legacyPath);
+    const task = legacy.create({ title: '旧版任务', lane: 'execution', executor: '执行角色' });
+    legacy.close();
+
+    const target = new TaskStore(path.join(targetDir, 'taskboard.sqlite'));
+    expect(target.importLegacy(legacyPath)).toBe(1);
+    expect(target.get(task.id).title).toBe('旧版任务');
+    expect(target.listEvents(task.id).map((event) => event.action)).toContain('created');
+    expect(target.importLegacy(legacyPath)).toBe(0);
+    target.close();
+  });
 });

@@ -36,6 +36,16 @@ export interface CodexThreadSummary {
   createdAt?: number;
   updatedAt?: number;
   isPinned?: boolean;
+  archived: boolean;
+  runtimeStatus: string;
+  modelProvider?: string | null;
+  sourceKind?: string | null;
+  category: string;
+  classificationSource: 'auto' | 'manual';
+  tags: string[];
+  note: string;
+  linkedTaskCount: number;
+  syncedAt: string;
 }
 
 export interface CodexThreadDetail extends CodexThreadSummary {
@@ -45,6 +55,16 @@ export interface CodexThreadDetail extends CodexThreadSummary {
 export interface BootstrapData {
   tasks: Task[];
   threads: CodexThreadSummary[];
+  categories: string[];
+  sync: {
+    total: number;
+    active: number;
+    unarchived: number;
+    archived: number;
+    lastSyncedAt: string | null;
+    stale: boolean;
+    migratedTaskCount: number;
+  };
   codex: { connected: boolean; version: string; error?: string };
 }
 
@@ -72,6 +92,7 @@ export interface DesktopApi {
   readThread(threadId: string): Promise<CodexThreadDetail>;
   sendToThread(threadId: string, text: string): Promise<unknown>;
   openThreadInCodex(threadId: string): Promise<void>;
+  updateConversation(threadId: string, input: { category?: string; tags?: string[]; note?: string }): Promise<CodexThreadSummary>;
   createTask(input: CreateTaskInput): Promise<Task>;
   updateTask(id: string, patch: TaskPatch): Promise<Task>;
   listAuditEvents(taskId: string): Promise<AuditEvent[]>;
@@ -83,4 +104,3 @@ declare global {
     codexTaskboard: DesktopApi;
   }
 }
-

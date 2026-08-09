@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { assertReviewSeparation, defaultSubstatus, laneForDecision } from './stateMachine.js';
+import { assertReviewSeparation, assertWritableSubstatus, defaultSubstatus, laneForDecision } from './stateMachine.js';
 
 describe('task state machine', () => {
   it('derives governed lane defaults', () => {
     expect(defaultSubstatus('plan')).toBe('ready');
     expect(defaultSubstatus('execution')).toBe('claimed');
     expect(defaultSubstatus('review')).toBe('pending_review');
+  });
+
+  it('prevents acceptance states from bypassing the audit workflow', () => {
+    expect(() => assertWritableSubstatus('review', 'accepted')).toThrow('只能通过独立审计');
+    expect(() => assertWritableSubstatus('review', 'closed')).toThrow('只能通过独立审计');
+    expect(() => assertWritableSubstatus('review', 'pending_review')).not.toThrow();
   });
 
   it('prevents an executor accepting their own work', () => {

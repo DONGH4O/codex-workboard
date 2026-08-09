@@ -4,11 +4,11 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 const root = path.resolve(import.meta.dirname, '..');
-const executable = path.join(root, 'dist/mac-arm64/Codex Taskboard Demo.app/Contents/MacOS/Codex Taskboard Demo');
-const userData = mkdtempSync(path.join(tmpdir(), 'codex-taskboard-ui-qa-'));
+const executable = path.join(root, 'dist/mac-arm64/Codex Workboard.app/Contents/MacOS/Codex Workboard');
+const userData = mkdtempSync(path.join(tmpdir(), 'codex-workboard-ui-qa-'));
 const port = 9339;
-const child = spawn(executable, [`--remote-debugging-port=${port}`, `--user-data-dir=${userData}`], {
-  env: { ...process.env, TASKBOARD_SEED_DEMO: '1' },
+const child = spawn(executable, [`--remote-debugging-port=${port}`], {
+  env: { ...process.env, WORKBOARD_USER_DATA_DIR: userData, WORKBOARD_SEED_DEMO: '1' },
   stdio: 'ignore',
 });
 
@@ -86,4 +86,3 @@ try {
   await sleep(250);
   rmSync(userData, { recursive: true, force: true });
 }
-

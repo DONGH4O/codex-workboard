@@ -7,7 +7,8 @@ A macOS knowledge worker scans many parallel Codex tasks in a bright, cool-blue 
 ## Visual language
 
 - Familiar three-pane desktop layout: navigation, board, contextual task/conversation panel.
-- Icy blue-gray canvas, translucent white hierarchy surfaces, hairline dividers, and shallow shadows only where elevation communicates layering.
+- Icy blue-gray canvas with cyan, mint, and violet light fields behind translucent white hierarchy surfaces.
+- Purposeful glass: 46–76% translucent fills, 14–32 px backdrop blur, subtle saturation, bright inset edge highlights, hairline dividers, and compact shadows only where elevation communicates layering.
 - Clear blue is the primary action and navigation accent.
 - Cyan communicates planning, mint communicates active execution, violet communicates accepted work, and coral communicates blockers or rework.
 - System typeface and compact spacing keep the product dense but readable.
@@ -30,6 +31,9 @@ A macOS knowledge worker scans many parallel Codex tasks in a bright, cool-blue 
 --review: oklch(0.62 0.15 294);
 --review-soft: oklch(0.95 0.035 294);
 --danger: oklch(0.56 0.18 27);
+--glass: oklch(1 0 0 / .58);
+--glass-strong: oklch(1 0 0 / .76);
+--glass-line: oklch(1 0 0 / .72);
 ```
 
 ## Geometry

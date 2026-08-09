@@ -1,8 +1,8 @@
-# Codex Taskboard Demo
+# Codex Workboard
 
 ## Register
 
-- Product: local macOS desktop container
+- Product: local-first macOS desktop workboard, version 1.0
 - Renderer platform: web UI inside Electron
 - Delivery: standalone `.app`, not a browser preview and not a patch to the Codex application
 - Primary user: an individual Codex power user coordinating several long-running tasks
@@ -22,6 +22,14 @@ The board is a local coordination layer over the official Codex App Server proto
 3. Move it to `执行`, assign an executor, and continue the linked conversation.
 4. Move it to `验收和回顾` with explicit acceptance criteria.
 5. An independent auditor accepts it, asks for rework, or closes it with a review note.
+
+## Conversation catalog
+
+- Enumerate every supported Codex App Server source kind, for both unarchived and archived tasks.
+- Keep a local cache for resilience; visibly identify stale-cache mode when a live sync fails.
+- Auto-classify new conversations by title, preview, project path, and source metadata.
+- Preserve manual categories, tags, and notes across later syncs.
+- Tombstone conversations missing from a successful full sync without deleting local metadata.
 
 ## Principles
 
@@ -52,4 +60,3 @@ Restrained, native, calm, and operational. It should feel closer to a macOS prod
 - Visible focus states
 - Status labels in text as well as color
 - Reduced-motion friendly; no decorative animation
-

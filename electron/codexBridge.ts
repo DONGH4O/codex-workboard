@@ -5,6 +5,19 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 type RpcId = number;
 type RpcResponse = { id: RpcId; result?: unknown; error?: { code?: number; message?: string; data?: unknown } };
 
+const ALL_SOURCE_KINDS = [
+  'cli',
+  'vscode',
+  'exec',
+  'appServer',
+  'subAgent',
+  'subAgentReview',
+  'subAgentCompact',
+  'subAgentThreadSpawn',
+  'subAgentOther',
+  'unknown',
+];
+
 interface PendingRequest {
   resolve(value: unknown): void;
   reject(reason: Error): void;
@@ -65,9 +78,9 @@ export class CodexBridge {
 
       await this.request('initialize', {
         clientInfo: {
-          name: 'codex-taskboard-demo',
-          title: 'Codex Taskboard Demo',
-          version: '0.1.0',
+          name: 'codex-workboard',
+          title: 'Codex Workboard',
+          version: '1.0.0',
         },
       });
       this.notify('initialized', {});
@@ -119,22 +132,36 @@ export class CodexBridge {
     });
   }
 
-  async listThreads(): Promise<Array<Record<string, unknown>>> {
+  private async listThreadPageSet(archived: boolean): Promise<Array<Record<string, unknown>>> {
     await this.start();
     const threads: Array<Record<string, unknown>> = [];
     let cursor: string | null = null;
+    const seenCursors = new Set<string>();
+    let pages = 0;
     do {
       const response = (await this.request('thread/list', {
         cursor,
-        limit: 100,
+        limit: 200,
         sortKey: 'updated_at',
         sortDirection: 'desc',
-        archived: false,
+        archived,
+        sourceKinds: ALL_SOURCE_KINDS,
       })) as { data?: Array<Record<string, unknown>>; nextCursor?: string | null };
-      threads.push(...(response.data ?? []));
-      cursor = response.nextCursor ?? null;
-    } while (cursor && threads.length < 300);
+      threads.push(...(response.data ?? []).map((thread) => ({ ...thread, archived })));
+      const nextCursor = response.nextCursor ?? null;
+      if (nextCursor && seenCursors.has(nextCursor)) throw new Error('thread/list 返回了重复游标');
+      if (nextCursor) seenCursors.add(nextCursor);
+      cursor = nextCursor;
+      pages += 1;
+    } while (cursor && pages < 500);
+    if (cursor) throw new Error('thread/list 超出安全分页上限');
     return threads;
+  }
+
+  async listThreads(): Promise<Array<Record<string, unknown>>> {
+    const active = await this.listThreadPageSet(false);
+    const archived = await this.listThreadPageSet(true);
+    return [...active, ...archived];
   }
 
   async readThread(threadId: string): Promise<Record<string, unknown>> {
@@ -170,4 +197,3 @@ export class CodexBridge {
     this.process = null;
   }
 }
-

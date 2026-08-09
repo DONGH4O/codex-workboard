@@ -16,7 +16,17 @@ export function assertReviewSeparation(executor: string | null, auditor: string)
   }
 }
 
+export function assertWritableSubstatus(lane: Lane, substatus: Substatus): void {
+  const writable: Record<Lane, Substatus[]> = {
+    plan: ['idea', 'ready'],
+    execution: ['claimed', 'running', 'blocked', 'rework'],
+    review: ['pending_review'],
+  };
+  if (!writable[lane].includes(substatus)) {
+    throw new Error('验收结论只能通过独立审计流程写入');
+  }
+}
+
 export function laneForDecision(decision: 'accepted' | 'rework' | 'closed'): Lane {
   return decision === 'rework' ? 'execution' : 'review';
 }
-

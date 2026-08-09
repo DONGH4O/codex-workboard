@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Archive,
   AlertTriangle,
-  ArrowUpRight,
   Bell,
   Bot,
   Check,
@@ -10,7 +9,6 @@ import {
   ChevronDown,
   CircleDot,
   ClipboardCheck,
-  Clock3,
   Command,
   ExternalLink,
   Inbox,
@@ -41,6 +39,9 @@ import type {
   Substatus,
   Task,
 } from './types';
+import { ConversationPanel, ConversationView } from './ConversationView';
+
+type AppView = 'board' | 'conversations' | 'archive';
 
 const laneMeta: Record<Lane, { title: string; subtitle: string; icon: typeof Inbox }> = {
   plan: { title: '计划中', subtitle: '想法与已就绪任务', icon: Inbox },
@@ -104,14 +105,28 @@ function extractMessages(detail: CodexThreadDetail | null): Array<{ role: 'user'
 function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [threads, setThreads] = useState<CodexThreadSummary[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [sync, setSync] = useState<BootstrapData['sync']>({
+    total: 0,
+    active: 0,
+    unarchived: 0,
+    archived: 0,
+    lastSyncedAt: null,
+    stale: false,
+    migratedTaskCount: 0,
+  });
   const [codex, setCodex] = useState<BootstrapData['codex']>({ connected: false, version: '—' });
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<AppView>('board');
   const [createOpen, setCreateOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [createThreadId, setCreateThreadId] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [notice, setNotice] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
 
-  const selectedTask = tasks.find((task) => task.id === selectedId) ?? null;
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
+  const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? null;
   const linkedThread = selectedTask?.threadId ? threads.find((thread) => thread.id === selectedTask.threadId) ?? null : null;
 
   async function bootstrap() {
@@ -120,6 +135,8 @@ function App() {
       const data = await window.codexTaskboard.bootstrap();
       setTasks(data.tasks);
       setThreads(data.threads);
+      setCategories(data.categories);
+      setSync(data.sync);
       setCodex(data.codex);
     } catch (error) {
       setNotice({ tone: 'error', text: error instanceof Error ? error.message : String(error) });
@@ -149,8 +166,12 @@ function App() {
     try {
       const task = await window.codexTaskboard.createTask(input);
       setTasks((current) => [task, ...current]);
+      if (task.threadId) setThreads((current) => current.map((thread) => thread.id === task.threadId ? { ...thread, linkedTaskCount: thread.linkedTaskCount + 1 } : thread));
       setCreateOpen(false);
-      setSelectedId(task.id);
+      setCreateThreadId(null);
+      setView('board');
+      setSelectedThreadId(null);
+      setSelectedTaskId(task.id);
       setNotice({ tone: 'success', text: '任务已创建' });
     } catch (error) {
       setNotice({ tone: 'error', text: error instanceof Error ? error.message : String(error) });
@@ -171,76 +192,104 @@ function App() {
     setTasks((current) => current.map((item) => (item.id === updated.id ? updated : item)));
   }
 
+  function switchView(next: AppView) {
+    setView(next);
+    setSelectedTaskId(null);
+    setSelectedThreadId(null);
+    setFilter('');
+  }
+
+  function openCreate(threadId: string | null = null) {
+    setCreateThreadId(threadId);
+    setCreateOpen(true);
+  }
+
+  const viewTitle = view === 'board' ? '任务管理' : view === 'conversations' ? '全部对话' : '已归档';
+  const viewSubtitle = view === 'board' ? '高效规划 · 智能协同 · 结果驱动' : view === 'conversations' ? '统一检索、分类和关联当前 Codex 对话' : '保留历史上下文，按分类快速回查';
+  const uncategorized = threads.filter((thread) => !thread.archived && thread.category === '未分类').length;
+  const linkedConversations = threads.filter((thread) => !thread.archived && thread.linkedTaskCount > 0).length;
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="drag-region" />
         <div className="brand-row">
           <div className="brand-mark"><Command size={16} strokeWidth={2.2} /></div>
-          <span>Codex</span>
+          <span>Workboard</span>
           <ChevronDown size={14} className="muted-icon" />
         </div>
 
         <nav className="primary-nav" aria-label="主导航">
-          <button type="button" onClick={() => setCreateOpen(true)}><Plus size={17} />新任务</button>
-          <button type="button"><MessageSquareText size={17} />全部对话<span className="nav-count">{threads.length}</span></button>
-          <button type="button" className="active"><LayoutDashboard size={17} />任务看板</button>
-          <button type="button"><Clock3 size={17} />已安排</button>
-          <button type="button"><Archive size={17} />已归档</button>
+          <button type="button" onClick={() => openCreate()}><Plus size={17} />新任务</button>
+          <button type="button" className={view === 'conversations' ? 'active' : ''} onClick={() => switchView('conversations')}><MessageSquareText size={17} />全部对话<span className="nav-count">{sync.active}</span></button>
+          <button type="button" className={view === 'board' ? 'active' : ''} onClick={() => switchView('board')}><LayoutDashboard size={17} />任务看板</button>
+          <button type="button" className={view === 'archive' ? 'active' : ''} onClick={() => switchView('archive')}><Archive size={17} />已归档<span className="nav-count">{sync.archived}</span></button>
         </nav>
 
         <div className="sidebar-section">
           <div className="section-label">工作流</div>
-          <button type="button" className="workflow-row"><Inbox size={14} />计划中<span>{tasks.filter((t) => t.lane === 'plan').length}</span></button>
-          <button type="button" className="workflow-row"><CircleDot size={14} />执行<span>{tasks.filter((t) => t.lane === 'execution').length}</span></button>
-          <button type="button" className="workflow-row"><ShieldCheck size={14} />验收和回顾<span>{tasks.filter((t) => t.lane === 'review').length}</span></button>
+          <button type="button" className="workflow-row" onClick={() => switchView('board')}><Inbox size={14} />计划中<span>{tasks.filter((t) => t.lane === 'plan').length}</span></button>
+          <button type="button" className="workflow-row" onClick={() => switchView('board')}><CircleDot size={14} />执行<span>{tasks.filter((t) => t.lane === 'execution').length}</span></button>
+          <button type="button" className="workflow-row" onClick={() => switchView('board')}><ShieldCheck size={14} />验收和回顾<span>{tasks.filter((t) => t.lane === 'review').length}</span></button>
         </div>
 
         <div className="sidebar-section projects">
           <div className="section-label">最近项目</div>
-          {Array.from(new Set(threads.map((thread) => thread.cwd).filter(Boolean))).slice(0, 5).map((cwd) => (
+          {Array.from(new Set(threads.filter((thread) => !thread.archived).map((thread) => thread.cwd).filter(Boolean))).slice(0, 5).map((cwd) => (
             <div className="project-row" key={cwd}><span className="folder-dot" />{shortPath(cwd)}</div>
           ))}
           {!threads.length && <div className="empty-sidebar">等待 Codex 连接</div>}
         </div>
 
         <div className="connection-card">
-          <span className={`connection-dot ${codex.connected ? 'online' : ''}`} />
-          <div><strong>{codex.connected ? 'Codex 已连接' : 'Codex 未连接'}</strong><small>{codex.version}</small></div>
+          <span className={`connection-dot ${codex.connected && !sync.stale ? 'online' : ''}`} />
+          <div>
+            <strong>{sync.stale ? 'Codex 缓存模式' : codex.connected ? 'Codex 已连接' : 'Codex 未连接'}</strong>
+            <small>{sync.stale ? `上次同步 ${sync.lastSyncedAt ? new Date(sync.lastSyncedAt).toLocaleString('zh-CN') : '未知'}` : codex.version}</small>
+          </div>
         </div>
       </aside>
 
       <main className="workspace">
         <header className="topbar">
           <div>
-            <h1>任务管理</h1>
-            <div className="eyebrow">高效规划 · 智能协同 · 结果驱动</div>
+            <h1>{viewTitle}</h1>
+            <div className="eyebrow">{viewSubtitle}</div>
           </div>
           <div className="top-actions">
             <label className="search-box">
               <Search size={15} />
-              <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索任务、项目或对话…" aria-label="搜索任务" />
+              <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索任务、项目或对话…" aria-label="搜索" />
               <kbd>⌘ K</kbd>
             </label>
             <button type="button" className="icon-button" onClick={() => void bootstrap()} title="刷新"><RefreshCw size={16} /></button>
             <button type="button" className="icon-button notification-button" title="通知"><Bell size={16} /><span /></button>
-            <button type="button" className="primary-button" onClick={() => setCreateOpen(true)}><Plus size={16} />新增任务</button>
+            <button type="button" className="primary-button" onClick={() => openCreate()}><Plus size={16} />新增任务</button>
           </div>
         </header>
 
-        <section className="metric-grid" aria-label="任务概览">
-          <MetricCard tone="plan" icon={ClipboardCheck} label="计划中" value={metrics.planned} detail="等待梳理与领取" />
-          <MetricCard tone="execution" icon={TrendingUp} label="执行中" value={metrics.running} detail="已进入工作流" />
-          <MetricCard tone="complete" icon={CheckCircle2} label="已闭环" value={metrics.completed} detail="已验收或回顾" />
-          <MetricCard tone="risk" icon={AlertTriangle} label="风险任务" value={metrics.atRisk} detail="阻塞或待返工" />
-        </section>
+        {view === 'board' ? (
+          <section className="metric-grid" aria-label="任务概览">
+            <MetricCard tone="plan" icon={ClipboardCheck} label="计划中" value={metrics.planned} detail="等待梳理与领取" />
+            <MetricCard tone="execution" icon={TrendingUp} label="执行中" value={metrics.running} detail="已进入工作流" />
+            <MetricCard tone="complete" icon={CheckCircle2} label="已闭环" value={metrics.completed} detail="已验收或回顾" />
+            <MetricCard tone="risk" icon={AlertTriangle} label="风险任务" value={metrics.atRisk} detail="阻塞或待返工" />
+          </section>
+        ) : (
+          <section className="metric-grid" aria-label="对话概览">
+            <MetricCard tone="plan" icon={MessageSquareText} label="当前对话" value={sync.active} detail={sync.stale ? '本地缓存，等待重新同步' : 'App Server 全来源同步'} />
+            <MetricCard tone="execution" icon={LayoutDashboard} label="已关联任务" value={linkedConversations} detail="进入任务工作流" />
+            <MetricCard tone="complete" icon={Archive} label="已归档" value={sync.archived} detail="历史对话可回查" />
+            <MetricCard tone="risk" icon={AlertTriangle} label="待分类" value={uncategorized} detail="需要人工确认" />
+          </section>
+        )}
 
-        <div className="board-toolbar">
+        {view === 'board' && <div className="board-toolbar">
           <div><strong>任务看板</strong><span className="board-summary"><b>{tasks.length}</b> 个任务 · <b>{tasks.filter((t) => t.substatus === 'pending_review').length}</b> 个待验收</span></div>
           <button type="button" className="quiet-button"><ListFilter size={15} />筛选</button>
-        </div>
+        </div>}
 
-        <section className="board" aria-label="任务看板">
+        {view === 'board' ? <section className="board" aria-label="任务看板">
           {(Object.keys(laneMeta) as Lane[]).map((lane) => (
             <BoardColumn
               key={lane}
@@ -248,28 +297,42 @@ function App() {
               tasks={filteredTasks.filter((task) => task.lane === lane)}
               threads={threads}
               loading={loading}
-              onSelect={setSelectedId}
+              onSelect={setSelectedTaskId}
               onMove={async (taskId, targetLane) => {
                 const task = tasks.find((item) => item.id === taskId);
                 if (task) await moveTask(task, targetLane);
               }}
-              onCreate={() => setCreateOpen(true)}
+              onCreate={() => openCreate()}
             />
           ))}
-        </section>
+        </section> : <ConversationView threads={threads} categories={categories} archivedOnly={view === 'archive'} filter={filter} selectedId={selectedThreadId} onSelect={setSelectedThreadId} />}
       </main>
 
       {selectedTask && (
         <TaskPanel
           task={selectedTask}
           thread={linkedThread}
-          onClose={() => setSelectedId(null)}
+          onClose={() => setSelectedTaskId(null)}
           onTaskChange={replaceTask}
           onNotice={setNotice}
         />
       )}
 
-      {createOpen && <CreateTaskModal threads={threads} onClose={() => setCreateOpen(false)} onCreate={createTask} />}
+      {selectedThread && view !== 'board' && (
+        <ConversationPanel
+          thread={selectedThread}
+          categories={categories}
+          onClose={() => setSelectedThreadId(null)}
+          onUpdate={(updated) => {
+            setThreads((current) => current.map((thread) => thread.id === updated.id ? updated : thread));
+            if (!categories.includes(updated.category)) setCategories((current) => [...current, updated.category]);
+          }}
+          onCreateTask={(threadId) => openCreate(threadId)}
+          onOpen={(threadId) => void window.codexTaskboard.openThreadInCodex(threadId)}
+        />
+      )}
+
+      {createOpen && <CreateTaskModal threads={threads.filter((thread) => !thread.archived)} defaultThreadId={createThreadId} onClose={() => { setCreateOpen(false); setCreateThreadId(null); }} onCreate={createTask} />}
       {notice && <div className={`toast ${notice.tone}`} role="status">{notice.tone === 'success' ? <Check size={16} /> : <CircleDot size={16} />}{notice.text}<button type="button" onClick={() => setNotice(null)}><X size={14} /></button></div>}
     </div>
   );
@@ -349,12 +412,12 @@ function BoardColumn({ lane, tasks, threads, loading, onSelect, onMove, onCreate
   );
 }
 
-function CreateTaskModal({ threads, onClose, onCreate }: { threads: CodexThreadSummary[]; onClose(): void; onCreate(input: CreateTaskInput): Promise<void> }) {
+function CreateTaskModal({ threads, defaultThreadId, onClose, onCreate }: { threads: CodexThreadSummary[]; defaultThreadId: string | null; onClose(): void; onCreate(input: CreateTaskInput): Promise<void> }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [lane, setLane] = useState<Lane>('plan');
   const [priority, setPriority] = useState<Priority>('medium');
-  const [threadId, setThreadId] = useState('');
+  const [threadId, setThreadId] = useState(defaultThreadId ?? '');
   const [executor, setExecutor] = useState('');
   const [criteria, setCriteria] = useState('');
   const [saving, setSaving] = useState(false);
