@@ -53,13 +53,15 @@ function categoryTone(category: string): string {
   return tones[category] ?? 'slate';
 }
 
-export function ConversationView({ threads, categories, archivedOnly, filter, selectedId, onSelect }: {
+export function ConversationView({ threads, categories, archivedOnly, filter, selectedId, onSelect, onBulkCreate, bulkBusy }: {
   threads: CodexThreadSummary[];
   categories: string[];
   archivedOnly: boolean;
   filter: string;
   selectedId: string | null;
   onSelect(id: string): void;
+  onBulkCreate(): void;
+  bulkBusy: boolean;
 }) {
   const [category, setCategory] = useState('全部分类');
   useEffect(() => setCategory('全部分类'), [archivedOnly]);
@@ -98,7 +100,12 @@ export function ConversationView({ threads, categories, archivedOnly, filter, se
       <div className="conversation-list-pane">
         <div className="conversation-list-header">
           <div><strong>{archivedOnly ? '已归档对话' : category}</strong><span>{scoped.length} 个结果</span></div>
-          <span>按最近更新排序</span>
+          <div className="conversation-list-header-actions">
+            <span>按最近更新排序</span>
+            <button type="button" className="bulk-task-button" onClick={onBulkCreate} disabled={bulkBusy}>
+              <Plus size={13} />{bulkBusy ? '正在生成…' : '批量转为任务'}
+            </button>
+          </div>
         </div>
         <div className="conversation-list" role="list">
           {scoped.map((thread) => (

@@ -98,6 +98,7 @@ function registerIpc(): void {
   ipcMain.handle('threads:update-meta', (_event, threadId: string, input: { category?: string; tags?: string[]; note?: string }) =>
     store.updateConversation(threadId, input));
   ipcMain.handle('tasks:create', (_event, input: TaskInput) => store.create(input));
+  ipcMain.handle('tasks:bulk-create-from-conversations', () => store.bulkCreateFromConversations());
   ipcMain.handle('tasks:update', (_event, id: string, patch: Partial<TaskInput>) => store.update(id, patch));
   ipcMain.handle('tasks:audit:list', (_event, taskId: string) => store.listEvents(taskId));
   ipcMain.handle(

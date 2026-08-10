@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { DEFAULT_CATEGORIES, inferConversationCategory, parentConversationId } from './classifier.js';
 import { assertReviewSeparation, assertWritableSubstatus, defaultSubstatus, laneForDecision, type Lane, type Substatus } from './stateMachine.js';
+import { conversationTaskTitle, inferConversationStage } from './taskStage.js';
 
 export type Priority = 'low' | 'medium' | 'high';
 
@@ -58,6 +59,13 @@ export interface Conversation {
 export interface SyncState {
   lastCompletedAt: string | null;
   lastTotal: number;
+}
+
+export interface BulkTaskResult {
+  tasks: Task[];
+  created: number;
+  skipped: number;
+  byLane: Record<Lane, number>;
 }
 
 type Row = Record<string, string | number | null>;
@@ -173,6 +181,69 @@ export class TaskStore {
   list(): Task[] {
     const rows = this.db.prepare('SELECT * FROM tasks ORDER BY updated_at DESC').all() as Row[];
     return rows.map((row) => this.fromRow(row));
+  }
+
+  bulkCreateFromConversations(): BulkTaskResult {
+    const rows = this.db.prepare(`SELECT c.* FROM conversations c
+      WHERE c.available=1
+        AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.thread_id=c.id)
+      ORDER BY COALESCE(c.updated_at_epoch,c.created_at_epoch,0) DESC`).all() as Row[];
+    const totalConversations = Number((this.db.prepare('SELECT COUNT(*) AS count FROM conversations WHERE available=1').get() as Row).count ?? 0);
+    const ids: string[] = [];
+    const byLane: Record<Lane, number> = { plan: 0, execution: 0, review: 0 };
+    const taskInsert = this.db.prepare(`INSERT INTO tasks (
+      id,title,description,lane,substatus,priority,project_path,thread_id,executor,auditor,acceptance_criteria,created_at,updated_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const row of rows) {
+        const threadId = String(row.id);
+        const stage = inferConversationStage({
+          name: row.name,
+          preview: row.preview,
+          archived: Number(row.archived) === 1,
+        });
+        const id = randomUUID();
+        const now = new Date().toISOString();
+        const inferredTitle = conversationTaskTitle({ name: row.name, preview: row.preview });
+        const title = row.source_kind === 'subAgentOther' && /^The following is the Codex agent history/i.test(inferredTitle)
+          ? `内部代理审查 · ${String(row.category ?? '未分类')}`
+          : inferredTitle;
+        const preview = String(row.preview ?? '').replace(/\s+/g, ' ').trim().slice(0, 1200);
+        const category = String(row.category ?? '未分类');
+        const description = preview ? `【${category}】${preview}` : `【${category}】由 Codex 对话批量生成。`;
+        taskInsert.run(
+          id,
+          title,
+          description,
+          stage.lane,
+          stage.substatus,
+          'medium',
+          typeof row.cwd === 'string' ? row.cwd : null,
+          threadId,
+          stage.executor,
+          null,
+          stage.acceptanceCriteria,
+          now,
+          now,
+        );
+        this.addEvent(id, 'system', 'created', `由对话批量生成，归入${stage.lane}`);
+        ids.push(id);
+        byLane[stage.lane] += 1;
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+
+    return {
+      tasks: ids.map((id) => this.get(id)),
+      created: ids.length,
+      skipped: totalConversations - ids.length,
+      byLane,
+    };
   }
 
   syncConversations(input: Array<Record<string, unknown>>): Conversation[] {

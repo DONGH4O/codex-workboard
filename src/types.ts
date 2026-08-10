@@ -86,6 +86,13 @@ export interface TaskPatch extends Partial<CreateTaskInput> {
   substatus?: Substatus;
 }
 
+export interface BulkTaskResult {
+  tasks: Task[];
+  created: number;
+  skipped: number;
+  byLane: Record<Lane, number>;
+}
+
 export interface DesktopApi {
   bootstrap(): Promise<BootstrapData>;
   listThreads(): Promise<CodexThreadSummary[]>;
@@ -94,6 +101,7 @@ export interface DesktopApi {
   openThreadInCodex(threadId: string): Promise<void>;
   updateConversation(threadId: string, input: { category?: string; tags?: string[]; note?: string }): Promise<CodexThreadSummary>;
   createTask(input: CreateTaskInput): Promise<Task>;
+  bulkCreateTasks(): Promise<BulkTaskResult>;
   updateTask(id: string, patch: TaskPatch): Promise<Task>;
   listAuditEvents(taskId: string): Promise<AuditEvent[]>;
   reviewTask(id: string, input: { auditor: string; decision: 'accepted' | 'rework' | 'closed'; note: string }): Promise<Task>;

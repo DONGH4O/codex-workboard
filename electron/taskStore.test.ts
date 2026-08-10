@@ -88,6 +88,21 @@ describe('TaskStore', () => {
     db.close();
   });
 
+  it('bulk converts every unlinked conversation into an idempotent staged task', () => {
+    const db = store();
+    db.syncConversations([
+      { id: 'plan-thread', name: '制定迁移计划', archived: false, cwd: '/projects/a' },
+      { id: 'run-thread', name: '修复页面错误', archived: false, cwd: '/projects/b' },
+      { id: 'review-thread', name: '历史工作', archived: true, cwd: '/projects/c' },
+    ]);
+    const first = db.bulkCreateFromConversations();
+    expect(first).toMatchObject({ created: 3, skipped: 0, byLane: { plan: 1, execution: 1, review: 1 } });
+    expect(new Set(first.tasks.map((task) => task.threadId))).toEqual(new Set(['plan-thread', 'run-thread', 'review-thread']));
+    expect(first.tasks.every((task) => db.listEvents(task.id).some((event) => event.action === 'created'))).toBe(true);
+    expect(db.bulkCreateFromConversations()).toMatchObject({ created: 0, skipped: 3 });
+    db.close();
+  });
+
   it('migrates tasks and audit events from a valid legacy database', () => {
     const legacyDir = mkdtempSync(path.join(tmpdir(), 'codex-taskboard-legacy-'));
     const targetDir = mkdtempSync(path.join(tmpdir(), 'codex-workboard-target-'));

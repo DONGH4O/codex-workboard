@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('codexTaskboard', {
   openThreadInCodex: (threadId: string) => ipcRenderer.invoke('threads:open', threadId),
   updateConversation: (threadId: string, input: unknown) => ipcRenderer.invoke('threads:update-meta', threadId, input),
   createTask: (input: unknown) => ipcRenderer.invoke('tasks:create', input),
+  bulkCreateTasks: () => ipcRenderer.invoke('tasks:bulk-create-from-conversations'),
   updateTask: (id: string, patch: unknown) => ipcRenderer.invoke('tasks:update', id, patch),
   listAuditEvents: (taskId: string) => ipcRenderer.invoke('tasks:audit:list', taskId),
   reviewTask: (id: string, input: unknown) => ipcRenderer.invoke('tasks:review', id, input),

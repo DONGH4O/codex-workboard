@@ -124,6 +124,7 @@ function App() {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [notice, setNotice] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
   const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? null;
@@ -175,6 +176,28 @@ function App() {
       setNotice({ tone: 'success', text: '任务已创建' });
     } catch (error) {
       setNotice({ tone: 'error', text: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  async function bulkCreateTasks() {
+    setBulkBusy(true);
+    try {
+      const result = await window.codexTaskboard.bulkCreateTasks();
+      if (result.tasks.length) {
+        setTasks((current) => [...result.tasks, ...current]);
+        const linked = new Set(result.tasks.map((task) => task.threadId).filter(Boolean));
+        setThreads((current) => current.map((thread) => linked.has(thread.id) ? { ...thread, linkedTaskCount: thread.linkedTaskCount + 1 } : thread));
+      }
+      setNotice({
+        tone: 'success',
+        text: result.created
+          ? `已生成 ${result.created} 个任务：计划 ${result.byLane.plan}、执行 ${result.byLane.execution}、验收 ${result.byLane.review}`
+          : '所有对话都已关联任务，没有重复创建',
+      });
+    } catch (error) {
+      setNotice({ tone: 'error', text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setBulkBusy(false);
     }
   }
 
@@ -305,7 +328,7 @@ function App() {
               onCreate={() => openCreate()}
             />
           ))}
-        </section> : <ConversationView threads={threads} categories={categories} archivedOnly={view === 'archive'} filter={filter} selectedId={selectedThreadId} onSelect={setSelectedThreadId} />}
+        </section> : <ConversationView threads={threads} categories={categories} archivedOnly={view === 'archive'} filter={filter} selectedId={selectedThreadId} onSelect={setSelectedThreadId} onBulkCreate={() => void bulkCreateTasks()} bulkBusy={bulkBusy} />}
       </main>
 
       {selectedTask && (
