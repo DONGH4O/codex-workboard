@@ -17,11 +17,13 @@ The board is a local coordination layer over the official Codex App Server proto
 
 ## Core workflow
 
-1. Capture a task in `计划中`, optionally as an idea.
-2. Link it to an existing Codex conversation.
+1. Capture a task with an explicit logical project. The selector shows one business project per item rather than every historical conversation folder; each project maps to its primary working directory. By default, create and name a dedicated Codex conversation, persist the selected model, reasoning effort, speed, and approval policy, send the task as the first turn, and expose it immediately on the board; linking an existing conversation or creating a task-only record are explicit alternatives.
+2. Keep the generated or selected conversation linked to the task.
 3. Move it to `执行`, assign an executor, and continue the linked conversation.
+   Before launch, choose a model, model-supported speed tier, reasoning effort, and approval policy. During execution, follow the live plan, agent progress, command output, file changes, elapsed time, and approval requests inside Workboard.
+   Full access is an explicit high-risk preset that disables approvals and the sandbox for that turn. It must show an inline warning, require confirmation on launch, persist in the execution snapshot, and never leak into a later standard turn.
 4. Move it to `验收和回顾` with explicit acceptance criteria.
-5. An independent auditor accepts it, asks for rework, or closes it with a review note.
+5. The user accepts it directly or launches AI acceptance; a failed acceptance returns the task to execution.
 
 ## Conversation catalog
 
@@ -35,10 +37,23 @@ The board is a local coordination layer over the official Codex App Server proto
 
 - Task first: every execution should have a visible task and outcome.
 - Traceable: task, conversation, state changes, and review notes stay linked.
-- Independent acceptance: an executor cannot accept their own work.
+- User authority: the sole user can accept their own work without entering a separate reviewer identity or note.
+- Optional AI acceptance: Codex reviews linked evidence against explicit criteria; failure returns the task to execution.
 - Local first: task metadata remains on this Mac.
 - Recoverable: app failure must not corrupt or rewrite Codex conversation storage.
 - Honest states: planning, running, blocked, rework, accepted, and closed are distinct.
+- Live by default: task progress is observable without switching back to Codex; the Codex app remains a full-history and troubleshooting fallback.
+- Direct conversation: the linked-conversation tab is a working chat surface with shared model, reasoning, and approval controls; active replies and approval waits remain visible beside message history.
+- Conversation continuity: completion and rework never lock a non-terminal task's composer. A saved task or execution-snapshot thread ID is sufficient to continue; a temporarily missing directory summary may hide history, but must not block sending.
+- Historical continuation: before every follow-up, resume the persisted thread through App Server. If and only if App Server confirms the thread no longer exists, create a named continuation thread, relink the task, retain an audit event, and submit the user's message there.
+- Conversation by default: task creation starts a dedicated named Codex thread unless the user explicitly selects an existing thread or a task-only record.
+- Real speed tiers: speed choices come from each model's App Server `serviceTiers`, and the selected `serviceTier` persists with execution evidence.
+- Recoverable execution: interrupted sessions retain their last plan, output, and diff instead of pretending to still be live after restart.
+- Direct manipulation: sidebar workflow rows filter the board by lane, and the task detail stage area includes a recoverable archive action.
+- Batch operations: card checkboxes support selection across the visible board, governed bulk lane changes, and user batch acceptance for review-stage tasks with one audit event per task.
+- Conversation-aware ordering: each lane can sort by the linked Codex conversation's latest update time, with unlinked tasks placed last.
+- Actionable notifications: the top-bar bell is a pending-work center for approvals, execution risks, reviews, and sync failures; every task notification deep-links to its handling surface.
+- Routine hygiene: daily maintenance syncs conversations, creates missing task cards, preserves manual classification, and archives only accepted or closed terminal tasks.
 
 ## Personality
 

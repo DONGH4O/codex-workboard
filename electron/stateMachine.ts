@@ -23,7 +23,7 @@ export function assertWritableSubstatus(lane: Lane, substatus: Substatus): void 
     review: ['pending_review'],
   };
   if (!writable[lane].includes(substatus)) {
-    throw new Error('验收结论只能通过独立审计流程写入');
+    throw new Error('验收结论只能通过验收入口写入');
   }
 }
 

@@ -46,7 +46,7 @@ export function inferConversationStage(input: ConversationStageInput): Conversat
       lane,
       substatus: 'pending_review',
       executor: 'Codex 对话执行',
-      acceptanceCriteria: '由独立审计角色核对关联对话的结果、证据和遗留问题。',
+      acceptanceCriteria: '由用户确认，或由 AI 核对关联对话的结果、证据和遗留问题。',
     };
   }
   return {

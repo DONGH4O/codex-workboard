@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TaskStore } from './taskStore.js';
+import { emptyExecutionSnapshot } from './executionTracker.js';
 
 const testDirs: string[] = [];
 
@@ -19,8 +20,9 @@ afterEach(() => {
 describe('TaskStore', () => {
   it('creates and moves a task while preserving an audit trail', () => {
     const db = store();
-    const created = db.create({ title: '支持新增任务', substatus: 'idea' });
+    const created = db.create({ title: '支持新增任务', substatus: 'idea', projectName: '人民币利率', projectPath: '/projects/rmb' });
     expect(created.lane).toBe('plan');
+    expect(created).toMatchObject({ projectName: '人民币利率', projectPath: '/projects/rmb' });
     expect(db.update(created.id, { lane: 'execution' }).substatus).toBe('claimed');
     expect(db.listEvents(created.id).map((event) => event.action)).toContain('lane_changed');
     db.close();
@@ -36,15 +38,64 @@ describe('TaskStore', () => {
     db.close();
   });
 
+  it('allows user acceptance without a separate identity or typed note', () => {
+    const db = store();
+    const task = db.create({ title: '用户自行执行并验收', lane: 'review', executor: '用户' });
+    expect(task.endAt).toBeNull();
+    const accepted = db.review(task.id, { auditor: '用户', reviewerType: 'user', decision: 'accepted' });
+    expect(accepted).toMatchObject({ substatus: 'accepted', auditor: '用户' });
+    expect(accepted.endAt).toBeTruthy();
+    expect(db.listEvents(task.id).find((event) => event.action === 'accepted')?.note).toContain('用户');
+    db.close();
+  });
+
+  it('returns an AI-rejected task to execution without requiring user text', () => {
+    const db = store();
+    const task = db.create({ title: 'AI 验收', lane: 'review', executor: '执行角色' });
+    const rework = db.review(task.id, { auditor: 'AI审计 · Codex', reviewerType: 'ai', decision: 'rework' });
+    expect(rework).toMatchObject({ lane: 'execution', substatus: 'rework', auditor: 'AI审计 · Codex', endAt: null });
+    db.close();
+  });
+
   it('rejects acceptance bypasses and requires an executor', () => {
     const db = store();
-    expect(() => db.create({ title: '绕过验收', lane: 'review', substatus: 'accepted' })).toThrow('只能通过独立审计');
+    expect(() => db.create({ title: '绕过验收', lane: 'review', substatus: 'accepted' })).toThrow('只能通过验收入口');
     const unassigned = db.create({ title: '无人执行', lane: 'review' });
     expect(() => db.review(unassigned.id, { auditor: '审计角色', decision: 'accepted', note: '通过' })).toThrow('必须先指定执行人');
     const assigned = db.create({ title: '锁定结果', lane: 'review', executor: '执行角色' });
     const accepted = db.review(assigned.id, { auditor: '审计角色', decision: 'accepted', note: '证据齐全' });
     expect(() => db.update(accepted.id, { executor: '审计角色' })).toThrow('任务已锁定');
     expect(() => db.update(accepted.id, { lane: 'execution', substatus: 'rework' })).toThrow('任务已锁定');
+    db.close();
+  });
+
+  it('archives only terminal tasks during daily maintenance', () => {
+    const db = store();
+    db.syncConversations([{ id: 'new-thread', name: '制定自动维护计划', archived: false }]);
+    const pending = db.create({ title: '等待验收', lane: 'review', executor: '执行角色' });
+    const acceptedSource = db.create({ title: '已通过', lane: 'review', executor: '执行角色' });
+    const accepted = db.review(acceptedSource.id, { auditor: '审计角色', decision: 'accepted', note: '证据齐全' });
+    const result = db.runDailyMaintenance();
+    expect(result).toMatchObject({ created: 1, stagedByLane: { plan: 1, execution: 0, review: 0 }, archived: 1, activeTasks: 2 });
+    expect(result.archivedTaskIds).toEqual([accepted.id]);
+    expect(db.listActive().map((task) => task.id)).toContain(pending.id);
+    expect(db.listActive().some((task) => task.threadId === 'new-thread')).toBe(true);
+    expect(db.get(accepted.id).archivedAt).toBeTruthy();
+    expect(db.listEvents(accepted.id).map((event) => event.action)).toContain('archived');
+    expect(db.runDailyMaintenance().archived).toBe(0);
+    db.close();
+  });
+
+  it('archives any task from the card menu and restores it to the same state', () => {
+    const db = store();
+    const task = db.create({ title: '可撤销归档', lane: 'execution', priority: 'high' });
+    const archived = db.archiveTask(task.id);
+    expect(archived).toMatchObject({ lane: 'execution', substatus: 'claimed', priority: 'high' });
+    expect(archived.archivedAt).toBeTruthy();
+    expect(db.listActive().some((item) => item.id === task.id)).toBe(false);
+    const restored = db.restoreTask(task.id);
+    expect(restored).toMatchObject({ lane: 'execution', substatus: 'claimed', priority: 'high', archivedAt: null });
+    expect(db.listEvents(task.id).map((event) => event.action)).toEqual(expect.arrayContaining(['archived', 'restored']));
     db.close();
   });
 
@@ -98,6 +149,9 @@ describe('TaskStore', () => {
     const first = db.bulkCreateFromConversations();
     expect(first).toMatchObject({ created: 3, skipped: 0, byLane: { plan: 1, execution: 1, review: 1 } });
     expect(new Set(first.tasks.map((task) => task.threadId))).toEqual(new Set(['plan-thread', 'run-thread', 'review-thread']));
+    const categoryByThread = new Map(db.listConversations().map((thread) => [thread.id, thread.category]));
+    expect(first.tasks.every((task) => task.projectName === categoryByThread.get(task.threadId!))).toBe(true);
+    expect(first.tasks.every((task) => task.endAt === null)).toBe(true);
     expect(first.tasks.every((task) => db.listEvents(task.id).some((event) => event.action === 'created'))).toBe(true);
     expect(db.bulkCreateFromConversations()).toMatchObject({ created: 0, skipped: 3 });
     db.close();
@@ -119,4 +173,94 @@ describe('TaskStore', () => {
     expect(target.importLegacy(legacyPath)).toBe(0);
     target.close();
   });
+
+  it('persists live execution evidence and moves a completed turn into review', () => {
+    const db = store();
+    const task = db.create({ title: '实时执行任务', lane: 'plan', threadId: 'thread-live', executor: 'Codex' });
+    const snapshot = db.saveExecutionSnapshot({
+      ...emptyExecutionSnapshot({ taskId: task.id, threadId: 'thread-live', turnId: 'turn-live', model: 'gpt-5.6-terra', effort: 'high', serviceTier: 'priority', permissionPreset: 'full-access' }),
+      plan: [{ step: '运行测试', status: 'inProgress' }],
+      output: 'testing',
+    });
+    expect(snapshot).toMatchObject({ taskId: task.id, turnId: 'turn-live', status: 'running', output: 'testing', serviceTier: 'priority', permissionPreset: 'full-access' });
+    expect(db.findRunnableTaskByThreadId('thread-live')?.id).toBe(task.id);
+    expect(db.markExecutionStarted(task.id, 'turn-live')).toMatchObject({ lane: 'execution', substatus: 'running' });
+    expect(db.markExecutionFinished(task.id, 'completed', 'turn-live')).toMatchObject({ lane: 'review', substatus: 'pending_review' });
+    expect(db.listEvents(task.id).map((event) => event.action)).toEqual(expect.arrayContaining(['execution_started', 'execution_completed']));
+    db.close();
+  });
+
+  it('recovers a missing task conversation link from its execution snapshot', () => {
+    const db = store();
+    const task = db.create({ title: '恢复执行对话', lane: 'execution' });
+    db.saveExecutionSnapshot({
+      ...emptyExecutionSnapshot({ taskId: task.id, threadId: 'thread-recovered', turnId: 'turn-recovered' }),
+      status: 'completed',
+      completedAt: '2026-08-13T02:00:00.000Z',
+    });
+    expect(db.get(task.id).threadId).toBe('thread-recovered');
+    expect(db.listEvents(task.id).map((event) => event.action)).toContain('thread_link_recovered');
+    db.close();
+  });
+
+  it('relinks an unavailable conversation and records the recovery', () => {
+    const db = store();
+    const task = db.create({ title: '续作任务', lane: 'execution', threadId: 'thread-old' });
+    const updated = db.relinkThread(task.id, 'thread-new', '原对话不可用，创建续作对话');
+    expect(updated.threadId).toBe('thread-new');
+    expect(db.listEvents(task.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'thread_relinked', note: '原对话不可用，创建续作对话' }),
+    ]));
+    db.close();
+  });
+
+  it('marks unfinished execution as interrupted after restart while retaining evidence', () => {
+    const db = store();
+    const task = db.create({ title: '恢复执行证据', lane: 'execution', threadId: 'thread-restart' });
+    db.saveExecutionSnapshot({
+      ...emptyExecutionSnapshot({ taskId: task.id, threadId: 'thread-restart', turnId: 'turn-restart' }),
+      status: 'waiting_approval',
+      output: '保留的终端输出',
+      pendingApproval: {
+        requestId: 7,
+        method: 'item/commandExecution/requestApproval',
+        threadId: 'thread-restart',
+        turnId: 'turn-restart',
+        itemId: 'item-restart',
+        reason: '审批',
+        command: 'npm test',
+        cwd: '/tmp/project',
+        networkHost: '',
+        availableDecisions: ['accept', 'decline'],
+      },
+    });
+    expect(db.expireLiveExecutions()).toBe(1);
+    expect(db.getExecutionSnapshot(task.id)).toMatchObject({ status: 'interrupted', output: '保留的终端输出', pendingApproval: null });
+    db.close();
+  });
+
+  it('records each active-turn guidance message in the audit trail', () => {
+    const db = store();
+    const task = db.create({ title: '引导执行', lane: 'execution', threadId: 'thread-steer' });
+    db.recordExecutionGuidance(task.id, 'turn-steer', '  先核对输入数据，再继续生成结果。  ');
+    expect(db.listEvents(task.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        actorRole: 'executor',
+        action: 'execution_steered',
+        note: '已引导 Codex 回合 turn-steer：先核对输入数据，再继续生成结果。',
+      }),
+    ]));
+    db.close();
+  });
+
+  it('records an explicit handoff when Workboard releases a live conversation', () => {
+    const db = store();
+    const task = db.create({ title: '转到 Codex', lane: 'execution', threadId: 'thread-handoff' });
+    db.recordConversationHandoff(task.id, 'thread-handoff');
+    expect(db.listEvents(task.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'conversation_handed_off', note: expect.stringContaining('释放对话 thread-handoff') }),
+    ]));
+    db.close();
+  });
+
 });

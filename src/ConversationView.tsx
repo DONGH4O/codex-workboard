@@ -26,7 +26,7 @@ function shortPath(path?: string | null): string {
 }
 
 function timeOf(value?: number | null): string {
-  if (!value) return '—';
+  if (!value) return '-';
   return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value * 1000));
 }
 
@@ -112,6 +112,7 @@ export function ConversationView({ threads, categories, archivedOnly, filter, se
             <button
               type="button"
               className={`conversation-row ${selectedId === thread.id ? 'selected' : ''}`}
+              data-thread-id={thread.id}
               key={thread.id}
               onClick={() => onSelect(thread.id)}
               role="listitem"

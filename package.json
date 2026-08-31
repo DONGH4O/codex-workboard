@@ -2,6 +2,8 @@
   "name": "codex-workboard",
   "version": "1.0.0",
   "private": true,
+  "author": "new school",
+  "license": "MIT",
   "description": "Local-first macOS work board for organizing Codex conversations and audited tasks",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -15,8 +17,15 @@
     "test": "vitest run",
     "test:ui": "node scripts/qa-electron.mjs",
     "test:flow": "node scripts/qa-formal-flow.mjs",
+    "test:create-thread": "npm run build:main && node scripts/qa-create-thread.mjs",
+    "test:live": "npm run build:main && node scripts/qa-live-appserver.mjs",
+    "daily:maintenance": "npm run build:main && node scripts/daily-maintenance.mjs",
     "start": "electron .",
-    "pack": "npm run build && electron-builder --mac dir"
+    "pack": "npm run pack:mac",
+    "pack:mac": "npm run build && electron-builder --mac dir",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip",
+    "audit:security": "npm audit --registry=https://registry.npmjs.org --audit-level=high",
+    "release:check": "npm test && npm run build && npm run audit:security && node scripts/release-check.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
@@ -29,15 +38,19 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.0",
-    "electron": "^38.0.0",
+    "electron": "43.4.1",
     "electron-builder": "^26.0.12",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "vitest": "^3.2.4",
     "wait-on": "^8.0.1"
   },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "npm@11.17.0",
   "build": {
-    "appId": "local.closeclaw.codex-workboard",
+    "appId": "com.codexworkboard.desktop",
     "productName": "Codex Workboard",
     "asar": true,
     "files": [
@@ -47,8 +60,12 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
-      "target": ["dir"]
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
-    "artifactName": "${productName}-${version}-${arch}.${ext}"
+    "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
   }
 }

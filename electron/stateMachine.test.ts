@@ -9,8 +9,8 @@ describe('task state machine', () => {
   });
 
   it('prevents acceptance states from bypassing the audit workflow', () => {
-    expect(() => assertWritableSubstatus('review', 'accepted')).toThrow('只能通过独立审计');
-    expect(() => assertWritableSubstatus('review', 'closed')).toThrow('只能通过独立审计');
+    expect(() => assertWritableSubstatus('review', 'accepted')).toThrow('只能通过验收入口');
+    expect(() => assertWritableSubstatus('review', 'closed')).toThrow('只能通过验收入口');
     expect(() => assertWritableSubstatus('review', 'pending_review')).not.toThrow();
   });
 

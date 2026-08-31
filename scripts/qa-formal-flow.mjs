@@ -1,21 +1,21 @@
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createInterface } from 'node:readline';
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
+import { resolveCodexExecutable } from '../dist-electron/codexBridge.js';
 
 const root = path.resolve(import.meta.dirname, '..');
 const keepUserData = process.argv.includes('--keep-user-data');
 const userHome = mkdtempSync(path.join(tmpdir(), 'codex-workboard-formal-flow-'));
 const isolatedUserData = path.join(userHome, 'user-data');
-const codexHome = process.env.CODEX_HOME || path.join(process.env.HOME || '/Users/CLOSECLAW', '.codex');
+const codexHome = process.env.CODEX_HOME || path.join(homedir(), '.codex');
 const runId = new Date().toISOString().replaceAll(/[-:.TZ]/g, '').slice(0, 14);
 const evidencePath = path.join(import.meta.dirname, 'qa-formal-flow-evidence.json');
 const taskTitle = `正式流程测试 ${runId}`;
 const manualCategory = `流程验证-${runId.slice(-6)}`;
 const executor = 'Subagent-执行';
-const auditor = 'Subagent-审计';
 const allSourceKinds = [
   'cli',
   'vscode',
@@ -81,10 +81,7 @@ function resolveExecutable() {
 }
 
 function resolveCodex() {
-  return execFileSync('/bin/zsh', ['-lc', 'command -v codex'], {
-    encoding: 'utf8',
-    env: { ...process.env, CODEX_HOME: codexHome },
-  }).trim();
+  return resolveCodexExecutable();
 }
 
 class AppServerClient {
@@ -256,7 +253,7 @@ async function waitUntil(evaluate, expression, label, timeoutMs = 30_000) {
 }
 
 function byText(tag, text, rootSelector = 'document') {
-  return `Array.from(${rootSelector}.querySelectorAll(${JSON.stringify(tag)})).find((node) => node.textContent?.trim().includes(${JSON.stringify(text)}))`;
+  return `Array.from((${rootSelector})?.querySelectorAll(${JSON.stringify(tag)}) ?? []).find((node) => node.textContent?.trim().includes(${JSON.stringify(text)}))`;
 }
 
 function setValue(selector, value, eventName = 'input') {
@@ -302,6 +299,7 @@ async function run() {
         CODEX_HOME: codexHome,
         WORKBOARD_USER_DATA_DIR: isolatedUserData,
         WORKBOARD_SEED_DEMO: '1',
+        WORKBOARD_SKIP_LEGACY_MIGRATION: '1',
         TASKBOARD_SEED_DEMO: '1',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -345,15 +343,15 @@ async function run() {
       expectedActive: result.appServerBaseline.active,
       visibleConversationCount,
     });
-    const selectedThreadId = bootstrap.threads.find((thread) => !thread.archived)?.id;
-    assert(selectedThreadId, '基线中没有可用于流程测试的未归档对话');
     const selectedConversation = await cdp.evaluate(`(() => {
       const row = document.querySelector('.conversation-row');
       const title = row?.querySelector('.conversation-title')?.textContent?.trim();
+      const threadId = row?.dataset.threadId;
       row?.click();
-      return title;
+      return { title, threadId };
     })()`);
-    assert(selectedConversation, '无法打开首个对话');
+    assert(selectedConversation?.threadId, '无法打开首个对话', selectedConversation);
+    const selectedThreadId = selectedConversation.threadId;
     await waitUntil(cdp.evaluate, `Boolean(document.querySelector('.conversation-detail'))`, '对话详情');
     const categorySelector = '.conversation-detail .panel-field input[list="conversation-categories"]';
     await cdp.evaluate(setValue(categorySelector, manualCategory));
@@ -367,16 +365,21 @@ async function run() {
     result.evidence.conversation = {
       visibleConversationCount,
       threadId: selectedThreadId,
+      title: selectedConversation.title,
       manualCategory,
     };
 
     await cdp.evaluate(`${byText('button', '转为任务', "document.querySelector('.conversation-detail')")}?.click()`);
     await waitUntil(cdp.evaluate, `Boolean(document.querySelector('.modal'))`, '从对话转任务弹窗');
     await cdp.evaluate(setValue('.modal input[placeholder="要完成什么？"]', taskTitle));
-    await cdp.evaluate(setValue('.modal textarea[placeholder="补充上下文、边界或预期结果"]', '由端到端流程测试创建并验证独立审计闭环。'));
+    await cdp.evaluate(setValue('.modal textarea[placeholder="补充上下文、边界或预期结果"]', '由端到端流程测试创建并验证个人验收闭环。'));
     await cdp.evaluate(setValue('.modal input[placeholder="可稍后填写"]', executor));
-    await cdp.evaluate(setValue('.modal textarea[placeholder="哪些证据满足后才算完成？"]', '全量同步、人工分类、任务流转与独立审计全部通过。'));
-    const modalThreadId = await cdp.evaluate(`document.querySelector('.modal select:nth-of-type(3)')?.value || Array.from(document.querySelectorAll('.modal select')).find((node) => Array.from(node.options).some((option) => option.textContent?.includes('暂不关联')))?.value`);
+    await cdp.evaluate(setValue('.modal textarea[placeholder="哪些证据满足后才算完成？"]', '全量同步、人工分类、任务流转与用户验收全部通过。'));
+    const modalThreadId = await cdp.evaluate(`(() => {
+      const existingMode = Array.from(document.querySelectorAll('.modal .conversation-mode button')).find((button) => button.textContent?.includes('关联已有'));
+      if (existingMode?.getAttribute('aria-pressed') !== 'true') return '';
+      return document.querySelector('.modal .conversation-setup label.field select')?.value || '';
+    })()`);
     assert(modalThreadId === selectedThreadId, '从对话创建任务时未保留关联 ID', { selectedThreadId, modalThreadId });
     await cdp.evaluate(`document.querySelector('.modal button[type="submit"]')?.click()`);
     await waitUntil(cdp.evaluate, `document.body.innerText.includes(${JSON.stringify(taskTitle)}) && Boolean(document.querySelector('.detail-panel'))`, '关联任务创建');
@@ -385,42 +388,33 @@ async function run() {
     assert(created?.lane === 'plan', '新任务初始阶段不是计划中', created);
     result.checks.createLinkedTask = true;
 
-    await cdp.evaluate(setValue('.detail-panel .property-row select', 'execution', 'change'));
+    await cdp.evaluate(`${byText('button', '执行', "document.querySelector('.stage-transfer')")}?.click()`);
     await waitUntil(cdp.evaluate, `window.codexTaskboard.bootstrap().then((data) => data.tasks.some((task) => task.id === ${JSON.stringify(created.id)} && task.lane === 'execution' && ['claimed', 'running'].includes(task.substatus)))`, '流转到执行');
-    await cdp.evaluate(setValue('.detail-panel .property-row select', 'review', 'change'));
+    await cdp.evaluate(`${byText('button', '验收和回顾', "document.querySelector('.stage-transfer')")}?.click()`);
     await waitUntil(cdp.evaluate, `window.codexTaskboard.bootstrap().then((data) => data.tasks.some((task) => task.id === ${JSON.stringify(created.id)} && task.lane === 'review' && task.substatus === 'pending_review'))`, '流转到验收');
-    await waitUntil(cdp.evaluate, `Boolean(document.querySelector('.review-box'))`, '独立验收表单');
+    await waitUntil(cdp.evaluate, `Boolean(document.querySelector('.review-box'))`, '个人验收表单');
     result.checks.lifecycleToReview = true;
 
-    await cdp.evaluate(setValue('.review-box input[placeholder="输入审计角色名称"]', executor));
-    await cdp.evaluate(setValue('.review-box textarea[placeholder="记录验证结果、缺口或后续动作"]', '同一执行人不得批准。'));
+    const reviewModes = await cdp.evaluate(`Array.from(document.querySelector('.review-box select')?.options ?? []).map((option) => option.textContent?.trim())`);
+    assert(reviewModes.join('|') === '用户验收|AI 验收', '个人验收界面出现了额外角色或缺少 AI 验收', reviewModes);
+    const reviewCopy = await cdp.evaluate(`document.querySelector('.review-box')?.innerText || ''`);
+    assert(!reviewCopy.includes('独立人工验收') && !reviewCopy.includes('验收人'), '个人模式仍要求独立人工验收人', reviewCopy);
+    assert(reviewCopy.includes('证据与回顾（可选）'), '用户验收仍要求人工说明', reviewCopy);
     await cdp.evaluate(`${byText('button', '通过验收', "document.querySelector('.review-box')")}?.click()`);
-    const rejection = await waitUntil(cdp.evaluate, `(() => {
-      const toast = document.querySelector('.toast.error');
-      return toast?.textContent?.trim() || '';
-    })()`, '同人审计拒绝提示');
-    created = await cdp.evaluate(`window.codexTaskboard.bootstrap().then((data) => data.tasks.find((task) => task.id === ${JSON.stringify(created.id)}))`);
-    assert(created.lane === 'review' && created.substatus === 'pending_review' && !created.auditor, '同一执行人验收后任务状态被错误修改', created);
-    assert(/不能相同|独立|执行人/.test(rejection), '同人审计拒绝原因不清晰', rejection);
-    result.checks.sameActorRejected = true;
-    result.evidence.sameActorRejection = rejection;
-
-    await cdp.evaluate(setValue('.review-box input[placeholder="输入审计角色名称"]', auditor));
-    await cdp.evaluate(setValue('.review-box textarea[placeholder="记录验证结果、缺口或后续动作"]', '独立审计已复核：同步、分类、关联、流转和角色分离证据完整。'));
-    await cdp.evaluate(`${byText('button', '通过验收', "document.querySelector('.review-box')")}?.click()`);
-    await waitUntil(cdp.evaluate, `window.codexTaskboard.bootstrap().then((data) => data.tasks.some((task) => task.id === ${JSON.stringify(created.id)} && task.substatus === 'accepted' && task.auditor === ${JSON.stringify(auditor)}))`, '独立审计通过');
+    await waitUntil(cdp.evaluate, `window.codexTaskboard.bootstrap().then((data) => data.tasks.some((task) => task.id === ${JSON.stringify(created.id)} && task.substatus === 'accepted' && task.auditor === '用户'))`, '用户无输入验收通过');
     const events = await cdp.evaluate(`window.codexTaskboard.listAuditEvents(${JSON.stringify(created.id)})`);
     const actions = events.map((event) => event.action);
     assert(actions.includes('created') && actions.filter((action) => action === 'lane_changed').length >= 2 && actions.includes('accepted'), '审计轨迹不完整', events);
     await waitUntil(cdp.evaluate, `document.querySelector('.timeline')?.innerText?.includes('accepted')`, '界面显示审计轨迹');
-    result.checks.independentAuditAccepted = true;
+    result.checks.personalAcceptanceModes = true;
+    result.checks.userAcceptanceWithoutInput = true;
     result.checks.auditTrailVisible = true;
     result.evidence.task = {
       id: created.id,
       title: taskTitle,
       threadId: created.threadId,
       executor,
-      auditor,
+      auditor: '用户',
       finalLane: 'review',
       finalSubstatus: 'accepted',
       auditActions: actions,

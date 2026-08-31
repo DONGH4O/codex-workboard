@@ -3,5 +3,12 @@ dist/
 dist-electron/
 dist-renderer/
 qa/
+coverage/
 *.tsbuildinfo
 .DS_Store
+.env
+.env.*
+!.env.example
+assets/brand/*-chroma.png
+build/*.iconset/
+scripts/qa-*-evidence.json

@@ -1,0 +1,28 @@
+name: macOS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-package:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run release:check
+      - run: npm run pack:mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Codex-Workboard-macOS-${{ runner.arch }}
+          path: dist/mac*/Codex Workboard.app
+          if-no-files-found: error
