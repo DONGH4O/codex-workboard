@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-- 状态：`W0_REMEDIATED_PENDING_REAUDIT`
+- 状态：`W0_AUDIT_PASS_W1_PENDING`
 - 编制日期：2026-08-31
 - 上游仓库：https://github.com/Derekeee/codex-workboard
 - 本地只读基线：`F:\Project\workboard\source`
@@ -175,7 +175,7 @@ F2b 执行记录（2026-08-31）：已将唯一的清单提交推送至个人 Fo
 
 ## W0：Windows 基线构建与依赖核对
 
-状态：`REMEDIATED_PENDING_REAUDIT`
+状态：`AUDIT_PASS`
 
 目的：在不修改业务代码的前提下，确认项目依赖能在 Windows 安装、测试和编译，并记录真实失败基线。
 
