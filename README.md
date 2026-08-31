@@ -1,8 +1,12 @@
 # Codex Workboard
 
+[中文](#中文) | [English](#english)
+
+## 中文
+
 作者：new school
 
-一个本地优先的 macOS 桌面工作台，用任务看板组织本机 Codex 对话。它通过官方 `codex app-server` 读取和继续对话，不修改 Codex 应用，也不直接访问 Codex 的内部数据库。
+一个本地优先的 macOS 桌面工作台，用任务看板组织、执行和验收 Codex 对话。
 
 ## 已实现
 
@@ -71,10 +75,81 @@ npm run dist:mac
 
 发布产物仍为未签名版本；外部分发前建议配置 Apple Developer ID 签名与公证。
 
-日常使用时不需要回到 Codex 预览执行过程；只有需要查看完整历史或深度排障时，才从“关联对话”打开 Codex。
-
-## 边界
-
-当前版本是在独立 macOS 窗口中承载 Codex 任务工作流，并通过 App Server 接入对话能力。它不会把“任务看板”按钮注入官方 Codex 的侧栏；那一步依赖官方扩展入口，或需要承担每次升级后重新适配的非官方注入风险。
-
 Codex Workboard 是社区项目，与 OpenAI 无隶属或官方背书关系。项目按 [MIT License](LICENSE) 发布。
+
+---
+
+## English
+
+Author: new school
+
+Codex Workboard is a local-first macOS desktop application for organizing, executing, and accepting Codex conversations through a task board.
+
+### Features
+
+- Three workflow stages: Planning, Execution, and Acceptance & Review
+- A translucent blue desktop workspace with task metrics, a three-stage board, and a persistent acceptance panel
+- Task creation with priorities, assignees, acceptance criteria, and project paths
+- New tasks can select a project, model, reasoning effort, and speed tier; by default, Workboard creates and names a dedicated Codex conversation and sends the first task instruction immediately
+- Tasks can instead link to an existing conversation or remain task-only records; cards support multi-select, batch stage changes, and individually audited batch acceptance
+- Drag-and-drop workflow transitions and lane-specific substates
+- Clickable Planning, Execution, and Acceptance & Review filters in the sidebar; selecting the current filter again restores the complete three-lane board
+- Recoverable direct archiving from the task detail stage controls
+- Per-lane ordering by the latest linked-conversation activity, with unlinked tasks placed last
+- Explicit synchronization of all ten supported App Server source kinds across active and archived conversations
+- A unified conversation catalog with automatic and manual classification, tags, notes, and conversion into tasks
+- Deduplicated one-click conversion of every unlinked conversation into the three workflow stages; archive state, title actions, and review keywords determine the initial stage
+- Read messages and continue conversations directly from the linked-conversation panel with shared model, reasoning, speed, and approval controls
+- A live-execution panel with App Server models, model-supported speed tiers, reasoning effort, and approval presets for untrusted operations, on-request access, and full access
+- New tasks use the same model, speed, reasoning, and approval controls; project selection shows business names and chooses each project's most active working directory
+- Full access sends `approvalPolicy: never` and `sandboxPolicy: dangerFullAccess`; the UI warns and confirms before every launch, while later standard turns explicitly restore the workspace sandbox
+- Protected operations display approval cards inside Workboard with decline, approve once, and allow for session actions; approval waits, completion, and failure trigger macOS notifications
+- A notification center for pending approvals, blocked or rework tasks, acceptance work, and synchronization failures, with live counts and direct links to each handling surface
+- Execution evidence is persisted to local SQLite; after an application restart, previous output remains visible and is marked interrupted, while successful turns move to pending acceptance
+- Two acceptance modes for individual use: direct user acceptance or AI acceptance
+- User acceptance requires no separate reviewer identity or note; failed AI acceptance returns the task to Execution
+- Acceptance decisions can only be written through the acceptance controls, with state changes and audit events committed atomically
+- Local SQLite task storage, stale-cache indicators, migration from the earlier demo database, and an audit trail
+- Electron isolation with context isolation, a sandboxed preload, and no Node.js access in the renderer
+
+### Requirements
+
+- macOS
+- Node.js 22 or later
+- An installed and authenticated Codex CLI or ChatGPT/Codex desktop application
+
+### Local development
+
+```bash
+npm ci
+npm test
+npm run build
+npm run pack
+```
+
+The complete live App Server checks require an authenticated local Codex installation:
+
+```bash
+npm run test:live
+npm run test:create-thread
+npm run test:flow
+```
+
+### Run the packaged application
+
+Open:
+
+`dist/mac-arm64/Codex Workboard.app` on Apple Silicon, or the `.app` in the matching architecture directory.
+
+Version 1.0.0 is currently distributed without Apple Developer ID signing, notarization, or automatic updates. If macOS blocks the first launch, right-click the application in Finder and choose **Open**.
+
+Generate DMG and ZIP artifacts for a GitHub Release:
+
+```bash
+npm run release:check
+npm run dist:mac
+```
+
+Configure Apple Developer ID signing and notarization before distributing the application to a wider audience.
+
+Codex Workboard is an independent community project and is not affiliated with or endorsed by OpenAI. It is released under the [MIT License](LICENSE).
