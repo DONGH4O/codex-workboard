@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-- 状态：`W0_EXECUTED_PENDING_AUDIT`
+- 状态：`W0_REMEDIATED_PENDING_REAUDIT`
 - 编制日期：2026-08-31
 - 上游仓库：https://github.com/Derekeee/codex-workboard
 - 本地只读基线：`F:\Project\workboard\source`
@@ -175,7 +175,7 @@ F2b 执行记录（2026-08-31）：已将唯一的清单提交推送至个人 Fo
 
 ## W0：Windows 基线构建与依赖核对
 
-状态：`EXECUTED_PENDING_AUDIT`
+状态：`REMEDIATED_PENDING_REAUDIT`
 
 目的：在不修改业务代码的前提下，确认项目依赖能在 Windows 安装、测试和编译，并记录真实失败基线。
 
@@ -199,6 +199,8 @@ F2b 执行记录（2026-08-31）：已将唯一的清单提交推送至个人 Fo
 - [x] 没有高等级依赖审计问题阻断后续个人本机测试。
 
 W0 执行记录（2026-08-31）：通过 Corepack 使用项目声明的 npm 11.17.0，连续两次按锁文件安装成功，锁文件不变；构建通过，依赖审计为 0 个已知漏洞。单元测试 39/40 通过，唯一失败稳定定位为 Windows PATH 分隔符与原生可执行文件解析差异，进入 W1/W2 修复。详细摘要位于外层 `reports/W0/w0-baseline-report.md`。
+
+W0 审计修复记录（2026-08-31）：首轮独立审计发现 Electron Windows 可执行文件缺失、嵌套 npm 版本回落和逐次证据不足。现已显式允许必要依赖脚本，并通过项目根 `postinstall` 执行 Electron 43.4.1 按需安装；连续两次安装后均确认 Electron x64 可执行文件存在、锁文件内容不变、待批准脚本为零。渲染器与主进程构建分别由 Corepack npm 11.17.0 直接启动并通过，在线审计为 0 个已知漏洞。详细修复证据位于外层 `reports/W0`。
 
 回滚边界：仅移除项目内依赖目录和 W0 过程产物；删除前再次核对目标路径，不触碰源码、Fork 或用户数据。
 
