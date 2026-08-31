@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-- 状态：`F2B_EXECUTED_PENDING_AUDIT`
+- 状态：`W0_EXECUTED_PENDING_AUDIT`
 - 编制日期：2026-08-31
 - 上游仓库：https://github.com/Derekeee/codex-workboard
 - 本地只读基线：`F:\Project\workboard\source`
@@ -141,7 +141,7 @@ main      -> origin/main
 
 ## F2：补齐开发基线并创建功能分支
 
-状态：`F2B_EXECUTED_PENDING_AUDIT`
+状态：`AUDIT_PASS`
 
 目的：保留完整上游历史和版本标签，将所有开发隔离在专用分支。
 
@@ -175,28 +175,30 @@ F2b 执行记录（2026-08-31）：已将唯一的清单提交推送至个人 Fo
 
 ## W0：Windows 基线构建与依赖核对
 
-状态：`PENDING_F2_ACCEPTANCE`
+状态：`EXECUTED_PENDING_AUDIT`
 
 目的：在不修改业务代码的前提下，确认项目依赖能在 Windows 安装、测试和编译，并记录真实失败基线。
 
 拟执行动作：
 
-- [ ] 复核 Node.js、npm、Git、Codex CLI 和 Electron 架构。
-- [ ] 检查锁定依赖来源、Node.js 引擎要求和 Windows 可选二进制。
-- [ ] 将 npm、Electron 与 electron-builder 的缓存变量指向外层 `runtime` 子目录，并记录实际生效位置。
-- [ ] 在源码目录执行 `npm ci`，不做全局安装。
-- [ ] 执行单元测试、TypeScript 编译、渲染器构建和依赖审计。
-- [ ] 将命令输出整理到 `reports/W0`，不提交过程日志。
+- [x] 复核 Node.js、npm、Git、Codex CLI 和 Electron 架构。
+- [x] 检查锁定依赖来源、Node.js 引擎要求和 Windows 可选二进制。
+- [x] 将 npm、Electron 与 electron-builder 的缓存变量指向外层 `runtime` 子目录，并记录实际生效位置。
+- [x] 在源码目录执行 `npm ci`，不做全局安装。
+- [x] 执行单元测试、TypeScript 编译、渲染器构建和依赖审计。
+- [x] 将命令输出整理到 `reports/W0`，不提交过程日志。
 
 预期状态：允许记录“macOS 专用脚本失败”作为基线；不能把这种失败误报为 Windows 适配已完成。
 
 自动验收：
 
-- [ ] `npm ci` 可重复执行且锁文件没有意外变化。
-- [ ] `node_modules` 和 `dist*` 等临时目录仍被 Git 忽略；`artifacts`、`reports` 与 `runtime` 未进入源码提交范围。
-- [ ] 现有单元测试通过，或每个失败均定位到明确的平台差异。
-- [ ] `npm run build` 通过。
-- [ ] 没有高等级依赖审计问题阻断后续个人本机测试。
+- [x] `npm ci` 可重复执行且锁文件没有意外变化。
+- [x] `node_modules` 和 `dist*` 等临时目录仍被 Git 忽略；`artifacts`、`reports` 与 `runtime` 未进入源码提交范围。
+- [x] 现有单元测试通过，或每个失败均定位到明确的平台差异。
+- [x] `npm run build` 通过。
+- [x] 没有高等级依赖审计问题阻断后续个人本机测试。
+
+W0 执行记录（2026-08-31）：通过 Corepack 使用项目声明的 npm 11.17.0，连续两次按锁文件安装成功，锁文件不变；构建通过，依赖审计为 0 个已知漏洞。单元测试 39/40 通过，唯一失败稳定定位为 Windows PATH 分隔符与原生可执行文件解析差异，进入 W1/W2 修复。详细摘要位于外层 `reports/W0/w0-baseline-report.md`。
 
 回滚边界：仅移除项目内依赖目录和 W0 过程产物；删除前再次核对目标路径，不触碰源码、Fork 或用户数据。
 
