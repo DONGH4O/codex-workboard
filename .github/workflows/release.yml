@@ -3,6 +3,12 @@ name: macOS Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build and publish
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,14 +19,23 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - run: npm run release:check
-      - run: npm run dist:mac
+      - name: Build macOS release without implicit publishing
+        run: npm run build && npx electron-builder --mac dmg zip --publish never
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.dmg dist/*.zip --generate-notes --title "Codex Workboard $GITHUB_REF_NAME"
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/*.dmg dist/*.zip --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/*.dmg dist/*.zip --generate-notes --title "Codex Workboard $RELEASE_TAG"
+          fi

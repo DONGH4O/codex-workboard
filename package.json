@@ -23,7 +23,7 @@
     "start": "electron .",
     "pack": "npm run pack:mac",
     "pack:mac": "npm run build && electron-builder --mac dir",
-    "dist:mac": "npm run build && electron-builder --mac dmg zip",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip --publish never",
     "audit:security": "npm audit --registry=https://registry.npmjs.org --audit-level=high",
     "release:check": "npm test && npm run build && npm run audit:security && node scripts/release-check.mjs"
   },
