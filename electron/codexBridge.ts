@@ -173,18 +173,15 @@ export class CodexBridge {
   private turnWaiters = new Map<string, { resolve(value: Record<string, unknown>): void; reject(reason: Error): void; timer: NodeJS.Timeout }>();
   private eventListeners = new Set<(event: CodexBridgeEvent) => void>();
   private executablePath: string | null = null;
-  readonly version: string;
+  version = 'unknown';
 
-  constructor() {
-    try {
-      this.version = execFileSync(this.codexPath(), ['--version'], { encoding: 'utf8' }).trim();
-    } catch {
-      this.version = 'unknown';
-    }
-  }
+  constructor(private readonly runtime: {
+    resolveExecutable?: () => string;
+    readVersion?: (executablePath: string) => string;
+  } = {}) {}
 
   private codexPath(): string {
-    if (!this.executablePath) this.executablePath = resolveCodexExecutable();
+    if (!this.executablePath) this.executablePath = this.runtime.resolveExecutable?.() ?? resolveCodexExecutable();
     return this.executablePath;
   }
 
@@ -193,7 +190,14 @@ export class CodexBridge {
     if (this.starting) return this.starting;
 
     this.starting = (async () => {
-      const child = spawn(this.codexPath(), ['app-server', '--listen', 'stdio://'], {
+      const executablePath = this.codexPath();
+      try {
+        this.version = this.runtime.readVersion?.(executablePath)
+          ?? execFileSync(executablePath, ['--version'], { encoding: 'utf8' }).trim();
+      } catch {
+        this.version = 'unknown';
+      }
+      const child = spawn(executablePath, ['app-server', '--listen', 'stdio://'], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env },
       });

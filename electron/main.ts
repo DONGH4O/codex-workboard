@@ -4,11 +4,14 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CodexBridge, isThreadNotFoundError, type CodexBridgeEvent } from './codexBridge.js';
+import { loadBootstrapConversations } from './bootstrap.js';
 import { emptyExecutionSnapshot, eventThreadId, eventTurnId, reduceExecutionSnapshot, type ApprovalDecision, type ExecutionPermissionPreset, type ExecutionSnapshot } from './executionTracker.js';
+import { browserWindowPlatformOptions, shouldQuitWhenAllWindowsClose, shouldSkipCodexSync, WINDOWS_APP_USER_MODEL_ID } from './platform.js';
 import { TaskStore, type TaskInput } from './taskStore.js';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 app.setName('Codex Workboard');
+if (process.platform === 'win32') app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
 const appDataPath = app.getPath('appData');
 const requestedUserData = process.env.WORKBOARD_USER_DATA_DIR;
 app.setPath('userData', requestedUserData ? path.resolve(requestedUserData) : path.join(appDataPath, 'Codex Workboard'));
@@ -107,8 +110,7 @@ function createWindow(): void {
     height: 940,
     minWidth: 1050,
     minHeight: 680,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 18, y: 16 },
+    ...browserWindowPlatformOptions(process.platform),
     backgroundColor: '#eef8ff',
     show: false,
     webPreferences: {
@@ -146,20 +148,12 @@ function createWindow(): void {
 
 function registerIpc(): void {
   ipcMain.handle('app:bootstrap', async () => {
-    let threads = store.listConversations();
-    let error = '';
-    let stale = false;
-    try {
-      if (process.env.WORKBOARD_SKIP_CODEX_SYNC === '1') {
-        await bridge.listModels();
-        threads = store.listConversations();
-      } else {
-        threads = store.syncConversations(await bridge.listThreads());
-      }
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
-      stale = true;
-    }
+    const { threads, error, stale } = await loadBootstrapConversations({
+      skipCodexSync: shouldSkipCodexSync(process.env),
+      loadStored: () => store.listConversations(),
+      loadRemote: () => bridge.listThreads(),
+      persistRemote: (remoteThreads) => store.syncConversations(remoteThreads),
+    });
     const unarchived = threads.filter((thread) => !thread.archived).length;
     const archived = threads.length - unarchived;
     const syncState = store.getSyncState();
@@ -528,7 +522,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (shouldQuitWhenAllWindowsClose(process.platform)) app.quit();
 });
 
 app.on('before-quit', () => {

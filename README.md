@@ -26,7 +26,7 @@
 - 任务右侧提供“实时执行”：启动前选择 App Server 返回的模型、真实速度档位、思考深度与审批策略；审批策略包含未信任操作询问、Codex 按需申请和完全访问权限
 - 新建任务沿用同一套模型、速度、思考深度与审批策略；“所属项目”显示业务项目名，并自动选择该项目最活跃的工作目录
 - 完全访问权限会发送 `approvalPolicy: never` 与 `sandboxPolicy: dangerFullAccess`；界面显示风险提示并在每次启动前再次确认，切回普通策略时会显式恢复工作区沙盒
-- 受保护操作直接在 Workboard 显示审批卡，可批准一次、在本次会话允许或拒绝；审批、完成和失败会触发 macOS 通知
+- 受保护操作直接在 Workboard 显示审批卡，可批准一次、在本次会话允许或拒绝；审批、完成和失败会触发系统通知
 - 右上角通知中心汇总等待审批、阻塞/返工、待验收和同步异常；数量实时更新，点击通知直接进入对应处理位置
 - 执行证据持久化到本地 SQLite；应用重启后保留上次输出并明确标记为已中断，成功回合自动进入待验收
 - 面向个人使用的两种验收方式：用户直接验收，或发起 AI 验收
@@ -103,7 +103,7 @@ Codex Workboard is a local-first macOS desktop application for organizing, execu
 - A live-execution panel with App Server models, model-supported speed tiers, reasoning effort, and approval presets for untrusted operations, on-request access, and full access
 - New tasks use the same model, speed, reasoning, and approval controls; project selection shows business names and chooses each project's most active working directory
 - Full access sends `approvalPolicy: never` and `sandboxPolicy: dangerFullAccess`; the UI warns and confirms before every launch, while later standard turns explicitly restore the workspace sandbox
-- Protected operations display approval cards inside Workboard with decline, approve once, and allow for session actions; approval waits, completion, and failure trigger macOS notifications
+- Protected operations display approval cards inside Workboard with decline, approve once, and allow for session actions; approval waits, completion, and failure trigger system notifications
 - A notification center for pending approvals, blocked or rework tasks, acceptance work, and synchronization failures, with live counts and direct links to each handling surface
 - Execution evidence is persisted to local SQLite; after an application restart, previous output remains visible and is marked interrupted, while successful turns move to pending acceptance
 - Two acceptance modes for individual use: direct user acceptance or AI acceptance

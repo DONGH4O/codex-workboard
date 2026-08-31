@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('codexTaskboard', {
+  platform: process.platform,
   bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
   listThreads: () => ipcRenderer.invoke('threads:list'),
   readThread: (threadId: string) => ipcRenderer.invoke('threads:read', threadId),

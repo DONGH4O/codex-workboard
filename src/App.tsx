@@ -593,7 +593,7 @@ function App() {
   const linkedConversations = threads.filter((thread) => !thread.archived && thread.linkedTaskCount > 0).length;
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell platform-${window.codexTaskboard.platform}`}>
       <aside className="sidebar">
         <div className="drag-region" />
         <div className="brand-row">

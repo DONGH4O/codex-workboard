@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-- 状态：`W0_AUDIT_PASS_W1_PENDING`
+- 状态：`W1_AUDIT_PASS_PENDING_HUMAN_ACCEPTANCE`
 - 编制日期：2026-08-31
 - 上游仓库：https://github.com/Derekeee/codex-workboard
 - 本地只读基线：`F:\Project\workboard\source`
@@ -208,27 +208,31 @@ W0 审计修复记录（2026-08-31）：首轮独立审计发现 Electron Window
 
 ## W1：跨平台启动与 Windows 窗口适配
 
-状态：`PENDING_W0_ACCEPTANCE`
+状态：`AUDIT_PASS_PENDING_HUMAN_ACCEPTANCE`
 
 涉及范围：`package.json`、Electron 主进程、开发启动脚本及相应测试。
 
 拟改造项：
 
-- [ ] 用跨平台 Node.js 启动器替代 Unix 风格的内联环境变量语法。
-- [ ] macOS 保留 `hiddenInset` 与交通灯位置；Windows 使用正常可操作的系统标题栏或明确实现窗口控制覆盖层。
-- [ ] Windows 使用原生标题栏时调整页面顶部拖动层，避免遮挡窗口按钮或应用控件。
+- [x] 用跨平台 Node.js 启动器替代 Unix 风格的内联环境变量语法。
+- [x] macOS 保留 `hiddenInset` 与交通灯位置；Windows 使用正常可操作的系统标题栏或明确实现窗口控制覆盖层。
+- [x] Windows 使用原生标题栏时调整页面顶部拖动层，避免遮挡窗口按钮或应用控件。
 - [ ] 验证 Windows 下窗口拖动、缩放、最小化、最大化和关闭。
 - [ ] 验证关闭最后一个窗口时应用、数据库和 Codex 子进程能够正常退出。
-- [ ] 将通知文案从“macOS 通知”调整为平台中性描述。
-- [ ] 增加真正的离线 UI 测试入口，离线测试不得启动 App Server。
-- [ ] 所有开发和 UI 测试启动器同时设置独立 `WORKBOARD_USER_DATA_DIR` 与 `WORKBOARD_SKIP_LEGACY_MIGRATION=1`，不得从正式 Electron 数据目录导入旧库。
+- [x] 将通知文案从“macOS 通知”调整为平台中性描述。
+- [x] 增加真正的离线 UI 测试入口，离线测试不得启动 App Server。
+- [x] 所有开发和 UI 测试启动器同时设置独立 `WORKBOARD_USER_DATA_DIR` 与 `WORKBOARD_SKIP_LEGACY_MIGRATION=1`，不得从正式 Electron 数据目录导入旧库。
 
 自动验收：
 
-- [ ] Windows 构建通过，新增平台分支有单元测试。
-- [ ] 离线 Electron 冒烟测试通过，不读取真实 Codex 对话。
+- [x] Windows 构建通过，新增平台分支有单元测试。
+- [x] 离线 Electron 冒烟测试通过，不读取真实 Codex 对话。
 - [ ] 隔离目录外没有新增或修改 Workboard 数据，测试库中不存在从正式目录迁入的记录。
-- [ ] 进程退出后没有残留 Workboard 或测试 Electron 进程。
+- [x] 进程退出后没有残留 Workboard 或测试 Electron 进程。
+
+W1 自动验证记录（2026-08-31）：构建通过；新增平台、离线引导与桥接器延迟探测测试 8/8 通过；全量测试 47/48 通过，唯一失败仍为 W0 已记录并归入 W2 的 Windows Codex PATH 分隔符用例。离线 Electron 冒烟测试在一次性数据目录中通过，确认离线状态、演示数据、Windows 布局分支、数据库生成和退出码；桥接器仅构造时不会解析或执行 Codex，未发现残留测试进程或临时目录。源码位于非系统卷，本机 Electron GPU 沙箱在该卷启动存在设备限制，离线自动化仅对一次性测试进程使用 `--no-sandbox`；W4 仍须在系统卷便携产物上复核正常沙箱启动。详细摘要位于外层 `reports/W1/w1-automated-report.md`。
+
+W1 独立审计记录（2026-08-31）：首轮审计发现离线启动仍会在桥接器构造时探测 Codex 版本，且活动 Codex 子进程退出证据不足。修复后将可执行文件解析和版本探测延迟到显式启动，注入计数测试证明构造与状态读取均不会调用 Codex；复审重新执行构建、8 项新增测试、全量测试及连续两次离线界面测试后通过。活动 Codex 子进程退出、物理标题栏操作和缩放布局仍保持待办，没有被自动化结果替代。
 
 人工验收：
 

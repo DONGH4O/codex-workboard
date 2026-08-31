@@ -169,6 +169,7 @@ export interface BulkTaskResult {
 }
 
 export interface DesktopApi {
+  platform: string;
   bootstrap(): Promise<BootstrapData>;
   listThreads(): Promise<CodexThreadSummary[]>;
   readThread(threadId: string): Promise<CodexThreadDetail>;
