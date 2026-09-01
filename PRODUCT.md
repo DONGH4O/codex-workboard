@@ -2,9 +2,9 @@
 
 ## Register
 
-- Product: local-first macOS desktop workboard, version 1.0
+- Product: local-first macOS desktop workboard, version 1.0, with Windows x64 directory support under adaptation and acceptance
 - Renderer platform: web UI inside Electron
-- Delivery: standalone `.app`, not a browser preview and not a patch to the Codex application
+- Delivery target: standalone macOS `.app`; after generation and acceptance, an unsigned Windows x64 directory package. Neither is a browser preview or a patch to the Codex application
 - Primary user: an individual Codex power user coordinating several long-running tasks
 
 ## Purpose
@@ -39,7 +39,8 @@ The board is a local coordination layer over the official Codex App Server proto
 - Traceable: task, conversation, state changes, and review notes stay linked.
 - User authority: the sole user can accept their own work without entering a separate reviewer identity or note.
 - Optional AI acceptance: Codex reviews linked evidence against explicit criteria; failure returns the task to execution.
-- Local first: task metadata remains on this Mac.
+- Local first: task metadata remains in the Workboard data directory on this device.
+- Reversible Windows operation: start, status, and stop are bound to one exact process identity and isolated data directory; backup and restore never overwrite the source directory.
 - Recoverable: app failure must not corrupt or rewrite Codex conversation storage.
 - Honest states: planning, running, blocked, rework, accepted, and closed are distinct.
 - Live by default: task progress is observable without switching back to Codex; the Codex app remains a full-history and troubleshooting fallback.
@@ -57,7 +58,7 @@ The board is a local coordination layer over the official Codex App Server proto
 
 ## Personality
 
-Restrained, native, calm, and operational. It should feel closer to a macOS productivity tool than a promotional AI dashboard.
+Restrained, native, calm, and operational. It should feel closer to a native desktop productivity tool than a promotional AI dashboard.
 
 ## Avoid
 

@@ -6,7 +6,7 @@
 
 作者：new school
 
-一个本地优先的 macOS 桌面工作台，用任务看板组织、执行和验收 Codex 对话。
+一个本地优先的 macOS 桌面工作台，正在适配 Windows x64 目录版，用任务看板组织、执行和验收 Codex 对话。Windows 源码自动验证通过不等于目录包已生成、启动或完成人工验收。
 
 ## 已实现
 
@@ -37,7 +37,7 @@
 
 ## 环境要求
 
-- macOS
+- macOS；Windows x64 仍处于未签名目录包适配与验收阶段
 - Node.js 22 或更高版本
 - 已安装并登录 Codex CLI 或 ChatGPT/Codex 桌面应用
 
@@ -50,6 +50,10 @@ npm run build
 npm run pack
 ```
 
+Windows x64 目录包使用 `npm.cmd run pack:win` 生成；运行控制、独立数据目录、备份恢复和未签名边界见 [Windows 目录版说明](docs/windows-portable.md)。`dist:win` 仅用于未来生成 NSIS 安装包，本阶段不运行。
+
+Windows 真实 Codex 连接必须显式设置原生可执行文件 `CODEX_CLI_PATH` 和对应 `CODEX_HOME`。当前唯一固定支持版本为 `codex-cli 0.151.0-alpha.7.2`；其他版本会被预检拒绝。仅安装 Codex 桌面应用不等于独立 Workboard 已获得可用驱动或登录状态。
+
 完整的真实 App Server 验收需要本机已登录 Codex：
 
 ```bash
@@ -60,7 +64,9 @@ npm run test:flow
 
 ## 启动成品
 
-双击：
+Windows：按照 [Windows 目录版说明](docs/windows-portable.md) 使用受验证的 `workboard:start`、`workboard:status` 和 `workboard:stop`，并显式指定源码目录之外的数据与状态目录。当前目录包未签名、未安装，不代表正式发行。
+
+macOS 双击：
 
 `dist/mac-arm64/Codex Workboard.app`（Apple Silicon）或对应架构目录中的 `.app`
 
@@ -83,7 +89,7 @@ Codex Workboard 是社区项目，与 OpenAI 无隶属或官方背书关系。�
 
 Author: new school
 
-Codex Workboard is a local-first macOS desktop application for organizing, executing, and accepting Codex conversations through a task board.
+Codex Workboard is a local-first macOS desktop application currently being adapted to an unsigned Windows x64 directory build. Passing Windows source checks does not mean that the package has been generated, launched, or manually accepted.
 
 ### Features
 
@@ -114,7 +120,7 @@ Codex Workboard is a local-first macOS desktop application for organizing, execu
 
 ### Requirements
 
-- macOS
+- macOS; Windows x64 remains in unsigned directory-build adaptation and acceptance
 - Node.js 22 or later
 - An installed and authenticated Codex CLI or ChatGPT/Codex desktop application
 
@@ -127,6 +133,10 @@ npm run build
 npm run pack
 ```
 
+Use `npm.cmd run pack:win` for the Windows x64 directory build. See the [Windows portable guide](docs/windows-portable.md) for isolated data paths, verified start/status/stop control, backup and restore, and unsigned-build limitations. `dist:win` is reserved for a future NSIS build and is not part of directory-package acceptance.
+
+On Windows, set an explicit native `CODEX_CLI_PATH` and the matching `CODEX_HOME`. The only currently pinned supported version is `codex-cli 0.151.0-alpha.7.2`; preflight rejects other versions. Installing the Codex desktop app alone does not prove that an independent Workboard process has a usable driver or authenticated home.
+
 The complete live App Server checks require an authenticated local Codex installation:
 
 ```bash
@@ -137,7 +147,9 @@ npm run test:flow
 
 ### Run the packaged application
 
-Open:
+On Windows, follow the [Windows portable guide](docs/windows-portable.md) and use the verified start, status, and stop commands with data and state directories outside the checkout. The current directory build is unsigned and uninstalled, and is not a formal release.
+
+On macOS, open:
 
 `dist/mac-arm64/Codex Workboard.app` on Apple Silicon, or the `.app` in the matching architecture directory.
 

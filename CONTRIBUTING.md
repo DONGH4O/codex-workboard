@@ -4,7 +4,7 @@
 
 ## 开发环境
 
-- macOS
+- macOS 或 Windows x64
 - Node.js 22 或更高版本
 - npm 11
 - 如需运行真实 App Server 测试，需安装并登录 Codex CLI 或 ChatGPT/Codex 桌面应用
@@ -22,6 +22,7 @@ npm run build
 3. 不直接读取或修改 Codex 的私有数据库、会话文件或应用资源。
 4. 提交前运行 `npm run release:check`。
 5. PR 应保持范围清晰，并在说明中列出验证命令与结果。
+6. Windows 目录打包使用 `npm.cmd run pack:win`；不得在普通测试中运行 NSIS 安装程序，也不得把 `dist`、运行状态或用户数据提交到仓库。
 
 ## 真实集成测试
 

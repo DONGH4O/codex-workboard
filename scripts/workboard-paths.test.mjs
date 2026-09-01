@@ -14,7 +14,7 @@ describe('Workboard data directory resolution', () => {
   });
 
   it('uses platform-specific defaults without rewriting the home environment', () => {
-    expect(defaultWorkboardUserData('darwin', {}, '/Users/tester')).toBe(path.resolve('/Users/tester/Library/Application Support/Codex Workboard'));
+    expect(defaultWorkboardUserData('darwin', {}, 'Z:\\mock-home')).toBe(path.resolve('Z:\\mock-home/Library/Application Support/Codex Workboard'));
     expect(defaultWorkboardUserData('linux', { XDG_CONFIG_HOME: '/var/test-config' }, '/home/tester')).toBe(path.resolve('/var/test-config/Codex Workboard'));
   });
 });

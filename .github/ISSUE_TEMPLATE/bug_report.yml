@@ -13,11 +13,21 @@ body:
       placeholder: 1.0.0
     validations:
       required: true
-  - type: input
-    id: macos
+  - type: dropdown
+    id: platform
     attributes:
-      label: macOS 与芯片
-      placeholder: macOS 15 / Apple Silicon
+      label: 操作系统
+      options:
+        - Windows x64
+        - macOS Apple Silicon
+        - macOS Intel
+    validations:
+      required: true
+  - type: input
+    id: os_version
+    attributes:
+      label: 系统版本与构建类型
+      placeholder: Windows 11 24H2 / 未签名目录包
     validations:
       required: true
   - type: textarea

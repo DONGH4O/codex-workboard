@@ -2,7 +2,7 @@
 
 ## Scene
 
-A macOS knowledge worker scans many parallel Codex tasks in a bright, cool-blue operations cockpit. The visual reference is an airy enterprise task manager with summary metrics, a central workflow, and a persistent intelligence panel.
+A desktop knowledge worker scans many parallel Codex tasks in a bright, cool-blue operations cockpit. macOS retains the inset title bar; Windows uses its normal system title bar and controls.
 
 ## Visual language
 
@@ -15,6 +15,7 @@ A macOS knowledge worker scans many parallel Codex tasks in a bright, cool-blue 
 - Top metrics answer workload health at a glance; they are operational summaries, not decorative cards.
 - The right panel has three stable layers: task properties, live execution, and linked conversation. Live execution uses semantic status, compact controls, approval cards, plan steps, terminal output, and file diffs without changing the established icy-glass shell.
 - The new-task project control lists logical business projects, not raw historical working folders. A secondary line exposes the mapped working directory so the user can verify where Codex will start.
+- Platform chrome remains native: Windows minimize, maximize, close, resize, and system title-bar space must not be covered by draggable content.
 
 ## Tokens
 
