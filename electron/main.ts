@@ -9,6 +9,8 @@ import { loadBootstrapConversations } from './bootstrap.js';
 import { emptyExecutionSnapshot, eventThreadId, eventTurnId, reduceExecutionSnapshot, type ApprovalDecision, type ExecutionPermissionPreset, type ExecutionSnapshot, type RequestId } from './executionTracker.js';
 import { browserWindowPlatformOptions, shouldQuitWhenAllWindowsClose, shouldSkipCodexSync, WINDOWS_APP_USER_MODEL_ID } from './platform.js';
 import { TaskStore, type TaskInput } from './taskStore.js';
+import { acquireDataAccess, type DataAccessLease } from './dataAccessGate.js';
+import { createShutdownBarrier } from './shutdownBarrier.js';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 app.setName('Codex Workboard');
@@ -18,6 +20,7 @@ const requestedUserData = process.env.WORKBOARD_USER_DATA_DIR;
 app.setPath('userData', requestedUserData ? path.resolve(requestedUserData) : path.join(appDataPath, 'Codex Workboard'));
 const bridge = new CodexBridge();
 let store: TaskStore;
+let dataAccessLease: DataAccessLease | null = null;
 let mainWindow: BrowserWindow | null = null;
 let migratedTaskCount = 0;
 const turnTasks = new Map<string, string>();
@@ -434,7 +437,14 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(() => {
-  store = new TaskStore(path.join(app.getPath('userData'), 'taskboard.sqlite'));
+  dataAccessLease = acquireDataAccess(app.getPath('userData'), 'writer');
+  try {
+    store = new TaskStore(path.join(app.getPath('userData'), 'taskboard.sqlite'));
+  } catch (error) {
+    dataAccessLease.release();
+    dataAccessLease = null;
+    throw error;
+  }
   store.expireLiveExecutions();
   bridge.onEvent(handleBridgeEvent);
   migratedTaskCount = process.env.WORKBOARD_SKIP_LEGACY_MIGRATION === '1'
@@ -541,7 +551,18 @@ app.on('window-all-closed', () => {
   if (shouldQuitWhenAllWindowsClose(process.platform)) app.quit();
 });
 
-app.on('before-quit', () => {
-  void bridge.stop().catch(() => undefined);
-  store?.close();
-});
+async function closeApplicationResources(): Promise<void> {
+  try {
+    await bridge.stop();
+  } finally {
+    try {
+      store?.close();
+    } finally {
+      dataAccessLease?.release();
+      dataAccessLease = null;
+    }
+  }
+}
+
+const handleBeforeQuit = createShutdownBarrier(closeApplicationResources, () => app.exit(0));
+app.on('before-quit', (event) => { void handleBeforeQuit(event); });
