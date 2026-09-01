@@ -8,7 +8,7 @@
   },
   "author": "new school",
   "license": "MIT",
-  "description": "Local-first macOS work board for organizing Codex conversations and audited tasks",
+  "description": "Local-first desktop work board for organizing Codex conversations and audited tasks",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
@@ -41,7 +41,10 @@
     "start": "electron .",
     "pack": "npm run pack:mac",
     "pack:mac": "npm run build && electron-builder --mac dir",
+    "pack:win": "npm run build && electron-builder --win dir --x64 --publish never",
     "dist:mac": "npm run build && electron-builder --mac dmg zip --publish never",
+    "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
+    "verify:win-package": "node scripts/verify-windows-package.mjs",
     "audit:security": "npm audit --registry=https://registry.npmjs.org --audit-level=high",
     "release:check": "npm test && npm run build && npm run audit:security && node scripts/release-check.mjs"
   },
@@ -51,6 +54,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
@@ -84,6 +88,22 @@
         "zip"
       ]
     },
-    "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "deleteAppDataOnUninstall": false,
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
   }
 }

@@ -15,6 +15,12 @@ if (pkg.version !== '1.0.0') failures.push('package.json 版本不是 1.0.0');
 if (pkg.license !== 'MIT') failures.push('package.json 未声明 MIT License');
 if (pkg.author !== 'new school') failures.push('package.json 作者不是 new school');
 if (!pkg.build?.mac?.target?.includes('dmg') || !pkg.build?.mac?.target?.includes('zip')) failures.push('macOS Release 未同时配置 DMG 和 ZIP');
+const windowsTarget = pkg.build?.win?.target?.find((target) => target?.target === 'nsis');
+if (!windowsTarget?.arch?.includes('x64')) failures.push('Windows Release 未配置 NSIS x64');
+if (!pkg.scripts?.['pack:win']?.includes('--win dir') || !pkg.scripts?.['pack:win']?.includes('--x64')) failures.push('Windows 目录打包入口不完整');
+if (!pkg.scripts?.['dist:win']?.includes('--win nsis') || !pkg.scripts?.['dist:win']?.includes('--x64')) failures.push('Windows NSIS 打包入口不完整');
+if (pkg.build?.nsis?.deleteAppDataOnUninstall !== false) failures.push('NSIS 卸载未明确默认保留用户数据');
+if (process.platform === 'win32' && pkg.build?.win?.icon !== 'build/icon.png') failures.push('Windows 图标配置不完整');
 
 const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
 const forbidden = [
