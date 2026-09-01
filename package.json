@@ -47,6 +47,9 @@
     "verify:win-package": "node scripts/verify-windows-package.mjs",
     "data:backup": "npm run build:main && node scripts/workboard-data.mjs backup",
     "data:restore": "npm run build:main && node scripts/workboard-data.mjs restore",
+    "workboard:start": "npm run build:main && node scripts/workboard-run-control.mjs start",
+    "workboard:status": "npm run build:main && node scripts/workboard-run-control.mjs status",
+    "workboard:stop": "npm run build:main && node scripts/workboard-run-control.mjs stop",
     "audit:security": "npm audit --registry=https://registry.npmjs.org --audit-level=high",
     "release:check": "npm test && npm run build && npm run audit:security && node scripts/release-check.mjs"
   },

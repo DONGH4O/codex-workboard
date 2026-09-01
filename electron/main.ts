@@ -11,16 +11,19 @@ import { browserWindowPlatformOptions, shouldQuitWhenAllWindowsClose, shouldSkip
 import { TaskStore, type TaskInput } from './taskStore.js';
 import { acquireDataAccess, type DataAccessLease } from './dataAccessGate.js';
 import { createShutdownBarrier } from './shutdownBarrier.js';
+import { parseWorkboardRunArgs, startRunControlServer } from './runControl.js';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
+const runControl = parseWorkboardRunArgs(process.argv.slice(1));
 app.setName('Codex Workboard');
 if (process.platform === 'win32') app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
 const appDataPath = app.getPath('appData');
-const requestedUserData = process.env.WORKBOARD_USER_DATA_DIR;
+const requestedUserData = runControl.dataDir ?? process.env.WORKBOARD_USER_DATA_DIR;
 app.setPath('userData', requestedUserData ? path.resolve(requestedUserData) : path.join(appDataPath, 'Codex Workboard'));
 const bridge = new CodexBridge();
 let store: TaskStore;
 let dataAccessLease: DataAccessLease | null = null;
+let runControlServer: { close(): Promise<void> } | null = null;
 let mainWindow: BrowserWindow | null = null;
 let migratedTaskCount = 0;
 const turnTasks = new Map<string, string>();
@@ -436,7 +439,7 @@ function registerIpc(): void {
   ipcMain.handle('tasks:archive-completed', () => store.archiveCompletedTasks());
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   dataAccessLease = acquireDataAccess(app.getPath('userData'), 'writer');
   try {
     store = new TaskStore(path.join(app.getPath('userData'), 'taskboard.sqlite'));
@@ -541,6 +544,14 @@ app.whenReady().then(() => {
     });
   }
   registerIpc();
+  if (runControl.pipePath && runControl.runId) {
+    try {
+      runControlServer = await startRunControlServer(runControl.pipePath, runControl.runId, () => app.quit());
+    } catch (error) {
+      await closeApplicationResources().catch(() => undefined);
+      throw error;
+    }
+  }
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -552,16 +563,14 @@ app.on('window-all-closed', () => {
 });
 
 async function closeApplicationResources(): Promise<void> {
-  try {
-    await bridge.stop();
-  } finally {
-    try {
-      store?.close();
-    } finally {
-      dataAccessLease?.release();
-      dataAccessLease = null;
-    }
-  }
+  let cleanupError: unknown;
+  try { await runControlServer?.close(); } catch (error) { cleanupError ??= error; }
+  runControlServer = null;
+  try { await bridge.stop(); } catch (error) { cleanupError ??= error; }
+  try { store?.close(); } catch (error) { cleanupError ??= error; }
+  try { dataAccessLease?.release(); } catch (error) { cleanupError ??= error; }
+  dataAccessLease = null;
+  if (cleanupError) throw cleanupError;
 }
 
 const handleBeforeQuit = createShutdownBarrier(closeApplicationResources, () => app.exit(0));
