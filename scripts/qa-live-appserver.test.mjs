@@ -93,6 +93,47 @@ describe('qa-live-appserver isolated safety', () => {
     expect(JSON.stringify(output.mock.calls.at(-1)[0])).not.toContain('private');
   });
 
+  it('lists current and archived conversations without models, turns, identifiers, or permission mutation', async () => {
+    const fake = fakeBridge({
+      listThreads: vi.fn(async () => [
+        { id: 'active-private', archived: false },
+        { id: 'archived-private', archived: true },
+      ]),
+      readThread: vi.fn(),
+      sendToThread: vi.fn(),
+    });
+    const output = vi.fn();
+    const terminal = vi.fn();
+    const evidence = await main({
+      ...invocation('list-sync'), safetyRuntime, createBridge: () => fake.bridge,
+      buildTurnStartParams, output, terminal,
+    });
+    expect(evidence).toMatchObject({ result: 'PASS', listSyncCompleted: true, permission: null });
+    expect(fake.bridge.listThreads).toHaveBeenCalledTimes(1);
+    expect(fake.bridge.listModels).not.toHaveBeenCalled();
+    expect(fake.bridge.readThread).not.toHaveBeenCalled();
+    expect(fake.bridge.sendToThread).not.toHaveBeenCalled();
+    expect(fake.bridge.stop).toHaveBeenCalledTimes(1);
+    expect(fake.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(terminal).toHaveBeenCalledWith(expect.stringContaining('没有修改任何会话'));
+    const machineEvidence = JSON.stringify(output.mock.calls.at(-1)[0]);
+    expect(machineEvidence).not.toContain('active-private');
+    expect(machineEvidence).not.toContain('archived-private');
+  });
+
+  it('fails list-sync when the bridge does not preserve current/archive provenance', async () => {
+    const fake = fakeBridge({ listThreads: vi.fn(async () => [{ id: 'private-without-origin' }]) });
+    const output = vi.fn();
+    await expect(main({
+      ...invocation('list-sync'), safetyRuntime, createBridge: () => fake.bridge,
+      buildTurnStartParams, output, terminal: vi.fn(),
+    })).rejects.toThrow('缺少当前或归档来源标记');
+    expect(fake.bridge.stop).toHaveBeenCalledTimes(1);
+    expect(fake.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(output.mock.calls.at(-1)[0]).toMatchObject({ result: 'FAIL', listSyncCompleted: false });
+    expect(JSON.stringify(output.mock.calls.at(-1)[0])).not.toContain('private-without-origin');
+  });
+
   it('dispatches exactly the selected authorized handler and prints permission before bridge creation', async () => {
     const scenarios = ['steer', 'interrupt', 'approval-decline', 'approval-once', 'approval-session', 'user-input-answer', 'user-input-cancel', 'user-input-timeout'];
     for (const scenario of scenarios) {

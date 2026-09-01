@@ -229,8 +229,8 @@ describe('Codex bridge lifecycle', () => {
           threadRequests.push(message);
           const archived = message.params?.archived === true;
           const cursor = message.params?.cursor;
-          if (!cursor) return { data: [{ id: archived ? 'archived-1' : 'active-1' }], nextCursor: archived ? null : 'next-thread' };
-          return { data: [{ id: 'active-2' }], nextCursor: null };
+          if (!cursor) return { data: [{ id: archived ? 'archived-1' : 'active-1' }], nextCursor: archived ? 'next-archived' : 'next-current' };
+          return { data: [{ id: archived ? 'archived-2' : 'active-2' }], nextCursor: null };
         }
         return standardResponse(message);
       });
@@ -238,9 +238,35 @@ describe('Codex bridge lifecycle', () => {
     }));
     await bridge.start();
     expect((await bridge.listModels()).map((model) => model.id)).toEqual(['m1', 'm2']);
-    expect((await bridge.listThreads()).map((thread) => thread.id)).toEqual(['active-1', 'active-2', 'archived-1']);
-    expect(threadRequests).toHaveLength(3);
-    expect(threadRequests.every((request) => Array.isArray(request.params?.sourceKinds) && request.params?.sourceKinds.includes('unknown'))).toBe(true);
+    const listedThreads = await bridge.listThreads();
+    expect(listedThreads.map((thread) => thread.id)).toEqual(['active-1', 'active-2', 'archived-1', 'archived-2']);
+    expect(listedThreads.map((thread) => thread.archived)).toEqual([false, false, true, true]);
+    expect(threadRequests).toHaveLength(4);
+    const expectedSourceKinds = [
+      'cli', 'vscode', 'exec', 'appServer', 'subAgent', 'subAgentReview',
+      'subAgentCompact', 'subAgentThreadSpawn', 'subAgentOther', 'unknown',
+    ];
+    expect(threadRequests.every((request) => JSON.stringify(request.params?.sourceKinds) === JSON.stringify(expectedSourceKinds))).toBe(true);
+    expect(threadRequests.map((request) => request.params?.archived)).toEqual([false, false, true, true]);
+    expect(threadRequests.map((request) => request.params?.cursor)).toEqual([null, 'next-current', null, 'next-archived']);
+    await bridge.stop();
+  });
+
+  it.each([
+    ['missing data', { nextCursor: null }],
+    ['invalid data', { data: {}, nextCursor: null }],
+    ['missing nextCursor', { data: [] }],
+    ['invalid nextCursor', { data: [], nextCursor: 1 }],
+  ])('rejects an incomplete thread/list page: %s', async (_label, malformedPage) => {
+    let server!: FakeAppServer;
+    const bridge = new CodexBridge(runtime(() => {
+      server = new FakeAppServer((message) => {
+        if (message.method === 'thread/list') return malformedPage;
+        return standardResponse(message);
+      });
+      return server;
+    }));
+    await expect(bridge.listThreads()).rejects.toThrow(/thread\/list 分页响应/);
     await bridge.stop();
   });
 

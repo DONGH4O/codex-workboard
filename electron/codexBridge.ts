@@ -541,16 +541,25 @@ export class CodexBridge {
     const seenCursors = new Set<string>();
     let pages = 0;
     do {
-      const response = (await this.request('thread/list', {
+      const response = await this.request('thread/list', {
         cursor,
         limit: 200,
         sortKey: 'updated_at',
         sortDirection: 'desc',
         archived,
         sourceKinds: ALL_SOURCE_KINDS,
-      })) as { data?: Array<Record<string, unknown>>; nextCursor?: string | null };
-      threads.push(...(response.data ?? []).map((thread) => ({ ...thread, archived })));
-      const nextCursor = response.nextCursor ?? null;
+      });
+      if (!response || typeof response !== 'object' || Array.isArray(response)) {
+        throw new Error('thread/list 返回了无效分页响应');
+      }
+      const page = response as Record<string, unknown>;
+      if (!Array.isArray(page.data)) throw new Error('thread/list 分页响应缺少 data 数组');
+      if (!Object.prototype.hasOwnProperty.call(page, 'nextCursor')
+        || (page.nextCursor !== null && typeof page.nextCursor !== 'string')) {
+        throw new Error('thread/list 分页响应缺少有效 nextCursor');
+      }
+      threads.push(...page.data.map((thread) => ({ ...thread, archived })));
+      const nextCursor = page.nextCursor as string | null;
       if (nextCursor && seenCursors.has(nextCursor)) throw new Error('thread/list 返回了重复游标');
       if (nextCursor) seenCursors.add(nextCursor);
       cursor = nextCursor;

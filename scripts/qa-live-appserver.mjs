@@ -12,6 +12,7 @@ import {
 } from './w3-qa-safety.mjs';
 
 const SCRIPT_NAME = 'qa-live-appserver';
+const READ_ONLY_SCENARIOS = new Set(['list-sync', 'read-existing']);
 const APPROVAL_METHODS = [
   'item/commandExecution/requestApproval',
   'item/fileChange/requestApproval',
@@ -25,7 +26,7 @@ function defaultOutput(value) {
 
 function prerequisitesForScenario(scenario, env) {
   if (scenario === 'read-existing') return { existingThreadId: env.WORKBOARD_W3_EXISTING_THREAD_ID };
-  if (scenario === 'basic-create') return {};
+  if (scenario === 'basic-create' || scenario === 'list-sync') return {};
   return { threadId: env.WORKBOARD_W3_QA_THREAD_ID };
 }
 
@@ -155,6 +156,14 @@ export function createLiveScenarioHandlers(context) {
   };
 
   return {
+    'list-sync': async () => {
+      const threads = await bridge.listThreads();
+      if (!Array.isArray(threads)) throw new Error('会话同步未返回列表');
+      if (threads.some((thread) => typeof thread?.archived !== 'boolean')) {
+        throw new Error('会话同步结果缺少当前或归档来源标记');
+      }
+      return { listSyncCompleted: true };
+    },
     'read-existing': async () => {
       const thread = await bridge.readThread(threadId);
       if (thread?.id !== threadId) throw new Error('只读会话返回了不同标识');
@@ -205,15 +214,17 @@ export async function main(dependencies = {}) {
     throw error;
   }
 
-  const threadId = config.scenario === 'read-existing'
-    ? env.WORKBOARD_W3_EXISTING_THREAD_ID
-    : env.WORKBOARD_W3_QA_THREAD_ID;
+  const threadId = config.scenario === 'list-sync'
+    ? null
+    : config.scenario === 'read-existing'
+      ? env.WORKBOARD_W3_EXISTING_THREAD_ID
+      : env.WORKBOARD_W3_QA_THREAD_ID;
   const needsRuntimeModule = config.scenario !== 'unknown-request'
     && (!dependencies.createBridge || !dependencies.buildTurnStartParams);
   const runtimeModule = needsRuntimeModule ? await import('../dist-electron/codexBridge.js') : null;
   const permissionPreset = 'untrusted';
   let permission = null;
-  if (config.scenario !== 'read-existing' && config.scenario !== 'unknown-request') {
+  if (!READ_ONLY_SCENARIOS.has(config.scenario) && config.scenario !== 'unknown-request') {
     const preview = (dependencies.buildTurnStartParams ?? runtimeModule.buildTurnStartParams)({
       threadId,
       text: 'W3 live scenario permission preview',
@@ -244,6 +255,7 @@ export async function main(dependencies = {}) {
   let modelConfigured = false;
   let effortConfigured = false;
   let serviceTierConfigured = false;
+  let listSyncCompleted = false;
   const stopAttempts = new Set();
   const stopBridgeOnce = async (target) => {
     if (!target || stopAttempts.has(target)) return;
@@ -256,7 +268,7 @@ export async function main(dependencies = {}) {
     queue = createW3EventQueue(bridge, timeoutMs);
     let model = { id: '', defaultReasoningEffort: '', serviceTiers: [] };
     let serviceTier = null;
-    if (config.scenario !== 'read-existing') {
+    if (!READ_ONLY_SCENARIOS.has(config.scenario)) {
       const models = await bridge.listModels();
       model = models.find((item) => item.isDefault) ?? models[0];
       if (!model) throw new Error('App Server 未返回可用模型');
@@ -269,7 +281,8 @@ export async function main(dependencies = {}) {
       bridge, queue, threadId, model, serviceTier, permissionPreset, workspace: config.workspace,
       fallbackUserInputTimeoutMs, timeoutMarginMs,
     });
-    await dispatchW3Scenario(config.scenario, handlers);
+    const scenarioResult = await dispatchW3Scenario(config.scenario, handlers);
+    listSyncCompleted = scenarioResult?.listSyncCompleted === true;
     completed = true;
   } catch (error) {
     primaryError = error;
@@ -291,11 +304,15 @@ export async function main(dependencies = {}) {
     modelConfigured,
     effortConfigured,
     serviceTierConfigured,
+    listSyncCompleted,
     cleanupFailed: Boolean(cleanupError),
     error: primaryError ?? cleanupError,
   });
   output(evidence);
-  (dependencies.terminal ?? console.error)(`W3 场景 ${config.scenario} 已结束；会话保持不变，精确会话标识：${threadId}`);
+  const terminalMessage = config.scenario === 'list-sync'
+    ? 'W3 场景 list-sync 已结束；只读取当前与归档会话目录，没有修改任何会话。'
+    : `W3 场景 ${config.scenario} 已结束；会话保持不变，精确会话标识：${threadId}`;
+  (dependencies.terminal ?? console.error)(terminalMessage);
   if (failed) throw primaryError ?? cleanupError ?? new Error('W3 场景未完成');
   return evidence;
 }

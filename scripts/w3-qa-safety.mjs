@@ -8,6 +8,7 @@ export const W3_USER_DATA = 'F:\\Project\\workboard\\runtime\\w3-acceptance\\wor
 
 export const W3_SCENARIOS = Object.freeze([
   'basic-create',
+  'list-sync',
   'read-existing',
   'steer',
   'interrupt',
@@ -76,6 +77,7 @@ export function validateW3ScenarioPrerequisites(scenario, prerequisites = {}) {
   if (!W3_SCENARIO_SET.has(scenario)) throw new Error(`不支持的 W3 场景：${scenario}`);
   const required = {
     'basic-create': [],
+    'list-sync': [],
     'read-existing': ['existingThreadId'],
     steer: ['threadId'],
     interrupt: ['threadId'],
@@ -202,6 +204,7 @@ export function buildW3Evidence(input) {
     serviceTierConfigured: Boolean(input.serviceTierConfigured),
     createdQaThread: input.createdQaThread ? 'retained' : 'not-created',
     resumedAfterRestart: Boolean(input.resumedAfterRestart),
+    listSyncCompleted: Boolean(input.listSyncCompleted),
     cleanupFailed: Boolean(input.cleanupFailed),
     errorKind: input.error ? (input.error instanceof Error ? input.error.name : 'Error') : null,
   };

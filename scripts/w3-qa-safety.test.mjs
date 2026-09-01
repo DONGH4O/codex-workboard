@@ -51,6 +51,7 @@ describe('W3 real execution safety gate', () => {
   it('requires each scenario-specific identifier before path or driver checks', () => {
     const cases = {
       'basic-create': {},
+      'list-sync': {},
       'read-existing': { existingThreadId: 'thread-existing' },
       steer: { threadId: 'thread-1' },
       interrupt: { threadId: 'thread-1' },
@@ -64,7 +65,7 @@ describe('W3 real execution safety gate', () => {
     };
     for (const [scenario, prerequisites] of Object.entries(cases)) {
       expect(validateW3ScenarioPrerequisites(scenario, prerequisites)).toBe(scenario);
-      if (scenario !== 'basic-create') expect(() => validateW3ScenarioPrerequisites(scenario, {})).toThrow('缺少先决条件');
+      if (!['basic-create', 'list-sync'].includes(scenario)) expect(() => validateW3ScenarioPrerequisites(scenario, {})).toThrow('缺少先决条件');
     }
   });
 
@@ -96,7 +97,7 @@ describe('W3 real execution safety gate', () => {
 
   it('dispatches exactly one selected scenario handler for every allowed scenario', () => {
     const scenarios = [
-      'basic-create', 'read-existing', 'steer', 'interrupt', 'approval-decline', 'approval-once',
+      'basic-create', 'list-sync', 'read-existing', 'steer', 'interrupt', 'approval-decline', 'approval-once',
       'approval-session', 'user-input-answer', 'user-input-cancel', 'user-input-timeout', 'unknown-request',
     ];
     for (const selected of scenarios) {
@@ -192,12 +193,14 @@ describe('W3 permission and evidence boundary', () => {
       eventMethods: ['turn/completed', 'turn/started', 'turn/completed'],
       permission: summarizeW3TurnParams(ordinaryParams('untrusted'), W3_WORKSPACE),
       createdQaThread: true,
+      listSyncCompleted: true,
       error: new Error('thread-123 C:\\Users\\dongh secret reply'),
       threadId: 'thread-123',
       message: 'secret reply',
     });
     const serialized = JSON.stringify(evidence);
     expect(evidence.createdQaThread).toBe('retained');
+    expect(evidence.listSyncCompleted).toBe(true);
     expect(evidence.eventMethods).toEqual(['turn/completed', 'turn/started']);
     expect(serialized).not.toContain('thread-123');
     expect(serialized).not.toContain('secret reply');

@@ -27,6 +27,7 @@
     "test:ui": "node scripts/qa-electron.mjs",
     "test:flow": "node scripts/qa-formal-flow.mjs",
     "w3:real:basic-create": "npm run build:main && node scripts/qa-create-thread.mjs --execute-real --scenario=basic-create",
+    "w3:real:list-sync": "npm run build:main && node scripts/qa-live-appserver.mjs --execute-real --scenario=list-sync",
     "w3:real:read-existing": "npm run build:main && node scripts/qa-live-appserver.mjs --execute-real --scenario=read-existing",
     "w3:real:steer": "npm run build:main && node scripts/qa-live-appserver.mjs --execute-real --scenario=steer",
     "w3:real:interrupt": "npm run build:main && node scripts/qa-live-appserver.mjs --execute-real --scenario=interrupt",
