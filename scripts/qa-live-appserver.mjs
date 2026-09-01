@@ -1,134 +1,306 @@
 import path from 'node:path';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { CodexBridge } from '../dist-electron/codexBridge.js';
-import { emptyExecutionSnapshot, eventThreadId, eventTurnId, reduceExecutionSnapshot } from '../dist-electron/executionTracker.js';
+import { fileURLToPath } from 'node:url';
+import {
+  bindW3ServerRequest,
+  bindW3TurnStart,
+  buildW3Evidence,
+  dispatchW3Scenario,
+  isW3BoundTurnEvent,
+  summarizeW3TurnParams,
+  validateW3ExecutionGate,
+  w3ExecutionSummary,
+} from './w3-qa-safety.mjs';
 
-const root = path.resolve(import.meta.dirname, '..');
-const bridge = new CodexBridge();
-let expectedThreadId = '';
-const imageQaDir = mkdtempSync(path.join(tmpdir(), 'workboard-image-qa-'));
-const imageQaPath = path.join(imageQaDir, 'one-pixel.png');
-writeFileSync(imageQaPath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
+const SCRIPT_NAME = 'qa-live-appserver';
+const APPROVAL_METHODS = [
+  'item/commandExecution/requestApproval',
+  'item/fileChange/requestApproval',
+  'applyPatchApproval',
+  'execCommandApproval',
+];
 
-try {
-  const models = await bridge.listModels();
-  const selected = models.find((model) => model.isDefault) ?? models[0];
-  if (!selected) throw new Error('App Server 未返回可用模型');
-  const effort = selected.supportedReasoningEfforts.some((item) => item.reasoningEffort === 'low')
-    ? 'low'
-    : selected.defaultReasoningEffort;
+function defaultOutput(value) {
+  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
 
-  expectedThreadId = await bridge.createThread({
-    title: `Workboard live QA ${new Date().toISOString()}`,
-    cwd: root,
-    model: selected.id,
-  });
-  if (!expectedThreadId) throw new Error('无法创建隔离的实时执行测试对话');
+function prerequisitesForScenario(scenario, env) {
+  if (scenario === 'read-existing') return { existingThreadId: env.WORKBOARD_W3_EXISTING_THREAD_ID };
+  if (scenario === 'basic-create') return {};
+  return { threadId: env.WORKBOARD_W3_QA_THREAD_ID };
+}
 
-  async function runTurn(reply, permissionPreset, images = []) {
-    const methods = [];
-    let snapshot = emptyExecutionSnapshot({ taskId: `qa-${permissionPreset}`, threadId: expectedThreadId, model: selected.id, effort, permissionPreset });
-    let unsubscribe = () => {};
-    const completed = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`${permissionPreset} 实时执行测试等待超时`)), 120_000);
-      unsubscribe = bridge.onEvent((event) => {
-        if (eventThreadId(event) !== expectedThreadId) return;
-        methods.push(event.method);
-        snapshot = reduceExecutionSnapshot(snapshot, event);
-        if (event.method === 'turn/completed') {
-          clearTimeout(timer);
-          resolve();
-        }
-      });
-    });
-    const turnStart = await bridge.sendToThread({
-      threadId: expectedThreadId,
-      text: `Do not use tools. Reply with exactly ${reply} and nothing else.`,
-      model: selected.id,
-      effort,
-      permissionPreset,
-      cwd: root,
-      images,
-    });
-    const turnId = turnStart?.turn?.id ?? '';
-    if (!turnId) throw new Error(`${permissionPreset} 测试未返回回合 ID`);
-    await completed;
-    unsubscribe();
-    return {
-      ok: snapshot.status === 'completed' && snapshot.lastMessage.includes(reply),
-      turnId,
-      status: snapshot.status,
-      message: snapshot.lastMessage,
-      permissionPreset: snapshot.permissionPreset,
-      methods: [...new Set(methods)],
-    };
-  }
-
-  async function runSteeredTurn() {
-    const turnStartPromise = bridge.sendToThread({
-      threadId: expectedThreadId,
-      text: 'Use the shell to run exactly `sleep 5`, then reply with ORIGINAL_DIRECTION. Do not reply before the command finishes.',
-      model: selected.id,
-      effort,
-      permissionPreset: 'full-access',
-      cwd: root,
-    });
-    let activeTurn = null;
-    for (let attempt = 0; attempt < 80 && !activeTurn; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      const thread = await bridge.readThread(expectedThreadId);
-      activeTurn = Array.isArray(thread?.turns) ? thread.turns.findLast((turn) => turn?.status === 'inProgress') ?? null : null;
+export function createW3EventQueue(bridge, timeoutMs = 120_000) {
+  const events = [];
+  const waiters = new Set();
+  let closed = false;
+  const settle = (waiter, event) => {
+    let matched = false;
+    try {
+      matched = waiter.predicate(event);
+    } catch (error) {
+      clearTimeout(waiter.timer);
+      waiters.delete(waiter);
+      waiter.reject(error);
+      return;
     }
-    if (!activeTurn?.id) {
-      await turnStartPromise;
-      throw new Error('未能从 thread/read 识别正在执行的回合');
-    }
-    const turnId = activeTurn.id;
-    const steer = await bridge.steerTurn({
-      threadId: expectedThreadId,
-      turnId,
-      text: 'Change direction now. After any active command ends, reply with exactly STEER_FLOW_OK and nothing else.',
-    });
-    await turnStartPromise;
-    let completedTurn = null;
-    for (let attempt = 0; attempt < 120 && completedTurn?.status !== 'completed'; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      const completedThread = await bridge.readThread(expectedThreadId);
-      completedTurn = Array.isArray(completedThread?.turns) ? completedThread.turns.find((turn) => turn?.id === turnId) ?? null : null;
-    }
-    const serialized = JSON.stringify(completedTurn ?? {});
-    return {
-      ok: steer.turnId === turnId && completedTurn?.status === 'completed' && serialized.includes('STEER_FLOW_OK'),
-      turnId,
-      steerTurnId: steer.turnId,
-      status: completedTurn?.status ?? 'missing',
-      receivedGuidance: serialized.includes('STEER_FLOW_OK'),
-      methods: ['thread/read', 'turn/steer'],
-    };
-  }
-
-  const standard = await runTurn('LIVE_FLOW_OK', 'on-request');
-  const steered = await runSteeredTurn();
-  const imageInput = await runTurn('IMAGE_FLOW_OK', 'on-request', [{ path: imageQaPath, detail: 'original' }]);
-  const fullAccess = await runTurn('FULL_ACCESS_FLOW_OK', 'full-access');
-  const restored = await runTurn('RESTORED_SANDBOX_OK', 'on-request');
-
-  const result = {
-    ok: standard.ok && steered.ok && imageInput.ok && fullAccess.ok && restored.ok,
-    model: selected.id,
-    effort,
-    threadId: expectedThreadId,
-    standard,
-    steered,
-    imageInput,
-    fullAccess,
-    restored,
+    if (!matched) return;
+    clearTimeout(waiter.timer);
+    waiters.delete(waiter);
+    waiter.resolve(event);
   };
-  console.log(JSON.stringify(result, null, 2));
-  if (!result.ok || !steered.methods.includes('turn/steer')) process.exitCode = 1;
-} finally {
-  if (expectedThreadId) await bridge.deleteThread(expectedThreadId).catch(() => undefined);
-  bridge.stop();
-  rmSync(imageQaDir, { recursive: true, force: true });
+  const unsubscribe = bridge.onEvent((event) => {
+    events.push(event);
+    for (const waiter of [...waiters]) settle(waiter, event);
+  });
+  return {
+    events,
+    waitFor(predicate, label, waitMs = timeoutMs) {
+      if (closed) return Promise.reject(new Error('W3 事件队列已关闭'));
+      for (const event of events) {
+        if (predicate(event)) return Promise.resolve(event);
+      }
+      return new Promise((resolve, reject) => {
+        const waiter = { predicate, resolve, reject, timer: null };
+        waiter.timer = setTimeout(() => {
+          waiters.delete(waiter);
+          reject(new Error(`W3 等待超时：${label}`));
+        }, waitMs);
+        waiters.add(waiter);
+      });
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      unsubscribe();
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error('W3 事件队列已关闭'));
+      }
+      waiters.clear();
+    },
+  };
+}
+
+function turnStatus(event) {
+  return event?.params?.turn?.status;
+}
+
+async function waitForTurnEnd(queue, binding, allowedStatuses) {
+  const event = await queue.waitFor(
+    (candidate) => candidate.method === 'turn/completed' && isW3BoundTurnEvent(candidate, binding),
+    '目标回合结束',
+  );
+  const status = turnStatus(event);
+  if (!allowedStatuses.includes(status)) throw new Error(`W3 目标回合状态不符合场景要求`);
+  return status;
+}
+
+export function createLiveScenarioHandlers(context) {
+  const { bridge, queue, threadId, model, permissionPreset, workspace } = context;
+  const start = async (text) => {
+    const response = await bridge.sendToThread({
+      threadId,
+      text,
+      model: model.id,
+      effort: model.defaultReasoningEffort,
+      serviceTier: context.serviceTier,
+      permissionPreset,
+      cwd: workspace,
+    });
+    return bindW3TurnStart(threadId, response);
+  };
+  const waitForRequest = async (binding, methods) => {
+    const event = await queue.waitFor(
+      (candidate) => methods.includes(candidate.method) && isW3BoundTurnEvent(candidate, binding),
+      '目标服务端请求',
+    );
+    return bindW3ServerRequest(event, binding, methods);
+  };
+
+  const approval = (decision) => async () => {
+    const binding = await start('请使用当前平台的命令工具运行 Node.js 单行命令，只输出固定文本 W3_APPROVAL_CHECK；不要修改文件。');
+    const request = await waitForRequest(binding, APPROVAL_METHODS);
+    bridge.respondToApproval(request.requestId, decision);
+    await waitForTurnEnd(queue, binding, ['completed']);
+    return { binding };
+  };
+
+  const userInput = (action) => async () => {
+    const binding = await start('请调用 request_user_input，只询问一个无敏感信息的单选问题，然后等待答复。');
+    const request = await waitForRequest(binding, ['item/tool/requestUserInput']);
+    if (action === 'answer') {
+      const event = queue.events.find((candidate) => candidate.requestId === request.requestId);
+      const question = Array.isArray(event?.params?.questions) ? event.params.questions[0] : null;
+      const questionId = question && typeof question.id === 'string' ? question.id : '';
+      if (!questionId) throw new Error('W3 用户输入请求缺少问题标识');
+      bridge.respondToUserInput(request.requestId, { [questionId]: { answers: ['W3 QA'] } });
+    } else if (action === 'cancel') {
+      bridge.cancelUserInput(request.requestId);
+    } else {
+      const requestEvent = queue.events.find((candidate) => candidate.requestId === request.requestId);
+      const advertisedTimeout = requestEvent?.params?.autoResolutionMs;
+      const effectiveTimeout = typeof advertisedTimeout === 'number' && advertisedTimeout > 0
+        ? advertisedTimeout
+        : context.fallbackUserInputTimeoutMs;
+      await queue.waitFor(
+        (candidate) => candidate.method === 'workboard/serverRequestClosed'
+          && candidate.requestId === request.requestId
+          && candidate.params?.reason === 'timeout',
+        '用户输入自动超时收敛',
+        effectiveTimeout + context.timeoutMarginMs,
+      );
+    }
+    await waitForTurnEnd(queue, binding, ['completed', 'interrupted']);
+    return { binding };
+  };
+
+  return {
+    'read-existing': async () => {
+      const thread = await bridge.readThread(threadId);
+      if (thread?.id !== threadId) throw new Error('只读会话返回了不同标识');
+      return {};
+    },
+    steer: async () => {
+      const binding = await start('不要使用工具。请先准备一份较长的编号说明，在完成前等待后续引导。');
+      const steered = await bridge.steerTurn({ threadId, turnId: binding.turnId, text: '改变方向，只回复 STEER_FLOW_OK。' });
+      if (steered?.turnId !== binding.turnId) throw new Error('引导没有绑定目标回合');
+      await waitForTurnEnd(queue, binding, ['completed']);
+      return { binding };
+    },
+    interrupt: async () => {
+      const binding = await start('不要使用工具。请生成一份足够长的编号说明，以便验证中断。');
+      await bridge.interruptTurn(threadId, binding.turnId);
+      await waitForTurnEnd(queue, binding, ['interrupted']);
+      return { binding };
+    },
+    'approval-decline': approval('decline'),
+    'approval-once': approval('accept'),
+    'approval-session': approval('acceptForSession'),
+    'user-input-answer': userInput('answer'),
+    'user-input-cancel': userInput('cancel'),
+    'user-input-timeout': userInput('timeout'),
+  };
+}
+
+export async function main(dependencies = {}) {
+  const argv = dependencies.argv ?? process.argv.slice(2);
+  const env = dependencies.env ?? process.env;
+  const output = dependencies.output ?? defaultOutput;
+  const requestedScenario = (() => {
+    const argument = argv.find((item) => item.startsWith('--scenario='));
+    if (argument) return argument.slice('--scenario='.length);
+    const index = argv.indexOf('--scenario');
+    return index >= 0 ? argv[index + 1] : '';
+  })();
+  let config;
+  try {
+    config = validateW3ExecutionGate({
+      argv,
+      env,
+      prerequisites: prerequisitesForScenario(requestedScenario, env),
+    }, dependencies.safetyRuntime);
+    if (config.scenario === 'basic-create') throw new Error('basic-create 只能使用 qa-create-thread');
+  } catch (error) {
+    output({ ...w3ExecutionSummary({ argv, env }), result: 'REFUSED', script: SCRIPT_NAME, errorKind: error instanceof Error ? error.name : 'Error' });
+    throw error;
+  }
+
+  const threadId = config.scenario === 'read-existing'
+    ? env.WORKBOARD_W3_EXISTING_THREAD_ID
+    : env.WORKBOARD_W3_QA_THREAD_ID;
+  const needsRuntimeModule = config.scenario !== 'unknown-request'
+    && (!dependencies.createBridge || !dependencies.buildTurnStartParams);
+  const runtimeModule = needsRuntimeModule ? await import('../dist-electron/codexBridge.js') : null;
+  const permissionPreset = 'untrusted';
+  let permission = null;
+  if (config.scenario !== 'read-existing' && config.scenario !== 'unknown-request') {
+    const preview = (dependencies.buildTurnStartParams ?? runtimeModule.buildTurnStartParams)({
+      threadId,
+      text: 'W3 live scenario permission preview',
+      cwd: config.workspace,
+      permissionPreset,
+    });
+    permission = summarizeW3TurnParams(preview, config.workspace);
+  }
+  output({ result: 'READY_FOR_REAL_EXECUTION', script: SCRIPT_NAME, scenario: config.scenario, permission, realInteractionStarted: false });
+
+  if (config.scenario === 'unknown-request') {
+    const error = new Error('unknown-request 由固定 CodexBridge 隔离契约测试执行，不是可独立运行的真实场景');
+    output(buildW3Evidence({ ok: false, script: SCRIPT_NAME, scenario: config.scenario, stage: 'failed', error }));
+    throw error;
+  }
+
+  const fallbackUserInputTimeoutMs = dependencies.fallbackUserInputTimeoutMs ?? 5_000;
+  const timeoutMarginMs = dependencies.timeoutMarginMs ?? 5_000;
+  const createBridge = dependencies.createBridge ?? (() => new runtimeModule.CodexBridge({
+    ...(config.scenario === 'user-input-timeout' ? { serverRequestTimeoutMs: fallbackUserInputTimeoutMs } : {}),
+  }));
+  const timeoutMs = dependencies.timeoutMs ?? 120_000;
+  let bridge;
+  let queue;
+  let primaryError;
+  let cleanupError;
+  let completed = false;
+  let modelConfigured = false;
+  let effortConfigured = false;
+  let serviceTierConfigured = false;
+  const stopAttempts = new Set();
+  const stopBridgeOnce = async (target) => {
+    if (!target || stopAttempts.has(target)) return;
+    stopAttempts.add(target);
+    try { await target.stop(); } catch (error) { cleanupError ??= error; }
+  };
+
+  try {
+    bridge = createBridge();
+    queue = createW3EventQueue(bridge, timeoutMs);
+    let model = { id: '', defaultReasoningEffort: '', serviceTiers: [] };
+    let serviceTier = null;
+    if (config.scenario !== 'read-existing') {
+      const models = await bridge.listModels();
+      model = models.find((item) => item.isDefault) ?? models[0];
+      if (!model) throw new Error('App Server 未返回可用模型');
+      serviceTier = model.serviceTiers?.find((tier) => tier.id === 'priority')?.id ?? model.serviceTiers?.[0]?.id ?? null;
+      modelConfigured = true;
+      effortConfigured = Boolean(model.defaultReasoningEffort);
+      serviceTierConfigured = Boolean(serviceTier);
+    }
+    const handlers = dependencies.scenarioHandlers ?? createLiveScenarioHandlers({
+      bridge, queue, threadId, model, serviceTier, permissionPreset, workspace: config.workspace,
+      fallbackUserInputTimeoutMs, timeoutMarginMs,
+    });
+    await dispatchW3Scenario(config.scenario, handlers);
+    completed = true;
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    queue?.close();
+    const target = bridge;
+    bridge = undefined;
+    await stopBridgeOnce(target);
+  }
+
+  const failed = !completed || Boolean(primaryError || cleanupError);
+  const evidence = buildW3Evidence({
+    ok: !failed,
+    script: SCRIPT_NAME,
+    scenario: config.scenario,
+    stage: failed ? 'failed' : 'completed',
+    eventMethods: queue?.events.map((event) => event.method),
+    permission,
+    modelConfigured,
+    effortConfigured,
+    serviceTierConfigured,
+    cleanupFailed: Boolean(cleanupError),
+    error: primaryError ?? cleanupError,
+  });
+  output(evidence);
+  (dependencies.terminal ?? console.error)(`W3 场景 ${config.scenario} 已结束；会话保持不变，精确会话标识：${threadId}`);
+  if (failed) throw primaryError ?? cleanupError ?? new Error('W3 场景未完成');
+  return evidence;
+}
+
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  main().catch(() => { process.exitCode = 1; });
 }
