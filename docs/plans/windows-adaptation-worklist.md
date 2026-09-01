@@ -377,7 +377,7 @@ W3 `read-existing` 单场景真实验收记录（2026-09-01）：固定 CLI、`C
 - [ ] 数据目录、日志和附件不写入源码目录。
 - [ ] 停止后 App Server、Electron 和数据库文件状态正常。
 - [ ] 重新启动后任务、分类、执行证据和审计记录保持一致。
-- [ ] 从备份恢复到第二个隔离目录后，数据库与附件的语义核对通过。
+- [x] 从备份恢复到第二个隔离目录后，数据库与附件的语义核对通过。纯隔离测试在新的第二临时目录核对任务、执行、审计、泳道、分类、关键动作顺序和附件可读性；不代表恢复目录中的真实便携版已启动。
 
 人工验收：
 
@@ -460,6 +460,6 @@ W4 源码、隔离测试与 Windows x64 目录包静态验收记录（2026-09-01
 
 建议只确认最小的第一个动作：
 
-> 请指定一个允许只读查看的既有测试会话并授权执行 W3 `read-existing`，或者明确选择跳过该项。获准读取时只验证指定会话，不续聊、不改名、不修改、不删除或归档。
+> 请授权 W4 真实便携版离线自动验收：把已审计的 `win-unpacked` 复制到列明的系统卷隔离 staging，只使用新的隔离 data/state/backup/restored-data/evidence 目录。首次启动额外设置现有 `WORKBOARD_SEED_DEMO=1`，仅在隔离 data 中生成内置演示任务、会话、执行与审计记录，并在隔离 `attachments` 写入一份无敏感信息的测试附件；后续启动取消 seed。在 `WORKBOARD_SKIP_CODEX_SYNC=1`、`WORKBOARD_SKIP_LEGACY_MIGRATION=1` 和正常 Electron 沙箱下完成两轮 start/status/stop、非空基线重启持久化、数据落点及恢复目录启动读回；所有目录和证据保留。
 
-除已完成的 `basic-create` 和 `list-sync` 外，在用户再次明确授权前，其余 `w3:real:*` 命令保持禁用；当前只确认自动协议及这两个单场景通过。
+合成数据和附件只能写入获准的隔离 data，不连接 Codex，不导入或写入正式数据。该授权不包含真实 Codex/App Server 或会话操作、物理界面认可、`--no-sandbox`、正式用户数据、登录、沙盒初始化、NSIS、安装、W5、推送、合并、Pull Request、Release 或清理。`basic-create`、`list-sync` 和 `read-existing` 已分别完成；其余 `w3:real:*` 场景继续保持禁用。
