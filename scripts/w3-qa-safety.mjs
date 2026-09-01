@@ -75,10 +75,18 @@ function isValidRequestId(value) {
 
 export function validateW3ScenarioPrerequisites(scenario, prerequisites = {}) {
   if (!W3_SCENARIO_SET.has(scenario)) throw new Error(`不支持的 W3 场景：${scenario}`);
+  if (scenario === 'read-existing') {
+    const hasId = isNonEmptyThreadId(prerequisites.existingThreadId);
+    const hasNamePrefix = isNonEmptyThreadId(prerequisites.existingThreadNamePrefix);
+    if (hasId === hasNamePrefix) {
+      throw new Error('W3 read-existing 必须且只能提供会话标识或唯一名称前缀之一');
+    }
+    return scenario;
+  }
   const required = {
     'basic-create': [],
     'list-sync': [],
-    'read-existing': ['existingThreadId'],
+    'read-existing': [],
     steer: ['threadId'],
     interrupt: ['threadId'],
     'approval-decline': ['threadId'],
@@ -208,6 +216,8 @@ export function buildW3Evidence(input) {
     createdQaThread: input.createdQaThread ? 'retained' : 'not-created',
     resumedAfterRestart: Boolean(input.resumedAfterRestart),
     listSyncCompleted: Boolean(input.listSyncCompleted),
+    existingThreadLocated: Boolean(input.existingThreadLocated),
+    readExistingCompleted: Boolean(input.readExistingCompleted),
     cleanupFailed: Boolean(input.cleanupFailed),
     errorKind: input.error ? (input.error instanceof Error ? input.error.name : 'Error') : null,
   };

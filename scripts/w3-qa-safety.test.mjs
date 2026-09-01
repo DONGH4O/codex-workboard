@@ -65,7 +65,7 @@ describe('W3 real execution safety gate', () => {
     };
     for (const [scenario, prerequisites] of Object.entries(cases)) {
       expect(validateW3ScenarioPrerequisites(scenario, prerequisites)).toBe(scenario);
-      if (!['basic-create', 'list-sync'].includes(scenario)) expect(() => validateW3ScenarioPrerequisites(scenario, {})).toThrow('缺少先决条件');
+      if (!['basic-create', 'list-sync'].includes(scenario)) expect(() => validateW3ScenarioPrerequisites(scenario, {})).toThrow();
     }
   });
 
@@ -91,7 +91,11 @@ describe('W3 real execution safety gate', () => {
     expect(() => bindW3TurnStart('', { turn: { id: 'turn-1' } })).toThrow('目标回合');
     expect(() => bindW3TurnStart('   ', { turn: { id: 'turn-1' } })).toThrow('目标回合');
     expect(() => bindW3TurnStart(123, { turn: { id: 'turn-1' } })).toThrow('目标回合');
-    expect(() => validateW3ScenarioPrerequisites('read-existing', { existingThreadId: 123 })).toThrow('缺少先决条件');
+    expect(() => validateW3ScenarioPrerequisites('read-existing', { existingThreadId: 123 })).toThrow('必须且只能提供');
+    expect(validateW3ScenarioPrerequisites('read-existing', { existingThreadNamePrefix: 'Windows Workboard 验收 ' })).toBe('read-existing');
+    expect(() => validateW3ScenarioPrerequisites('read-existing', {
+      existingThreadId: 'thread-existing', existingThreadNamePrefix: 'Windows Workboard 验收 ',
+    })).toThrow('必须且只能提供');
     expect(() => validateW3ScenarioPrerequisites('steer', { threadId: '   ' })).toThrow('缺少先决条件');
   });
 
@@ -204,6 +208,8 @@ describe('W3 permission and evidence boundary', () => {
     expect(evidence.createdQaThread).toBe('retained');
     expect(evidence).toMatchObject({ platformFamily: 'windows', platformOs: 'windows' });
     expect(evidence.listSyncCompleted).toBe(true);
+    expect(evidence.existingThreadLocated).toBe(false);
+    expect(evidence.readExistingCompleted).toBe(false);
     expect(evidence.eventMethods).toEqual(['turn/completed', 'turn/started']);
     expect(serialized).not.toContain('thread-123');
     expect(serialized).not.toContain('secret reply');

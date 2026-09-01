@@ -86,12 +86,82 @@ describe('qa-live-appserver isolated safety', () => {
     const fake = fakeBridge({ readThread: vi.fn(async () => ({ id: 'thread-existing', turns: [{ text: 'private' }] })) });
     const output = vi.fn();
     const evidence = await main({ ...invocation('read-existing'), safetyRuntime, createBridge: () => fake.bridge, buildTurnStartParams, output, terminal: vi.fn() });
-    expect(evidence.result).toBe('PASS');
+    expect(evidence).toMatchObject({ result: 'PASS', existingThreadLocated: true, readExistingCompleted: true });
     expect(fake.bridge.readThread).toHaveBeenCalledWith('thread-existing');
     expect(fake.bridge.listModels).not.toHaveBeenCalled();
     expect(fake.bridge.stop).toHaveBeenCalledTimes(1);
     expect(fake.unsubscribe).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(output.mock.calls.at(-1)[0])).not.toContain('private');
+  });
+
+  it('locates exactly one existing thread by authorized name prefix before reading it', async () => {
+    const fake = fakeBridge({
+      listThreads: vi.fn(async () => [
+        { id: 'thread-other', name: '其他会话' },
+        { id: 'thread-target', name: 'Windows Workboard 验收 2026-08-31T00:00:00.000Z' },
+      ]),
+      readThread: vi.fn(async () => ({ id: 'thread-target', turns: [{ text: 'private body' }] })),
+    });
+    const output = vi.fn();
+    const call = invocation('read-existing');
+    delete call.env.WORKBOARD_W3_EXISTING_THREAD_ID;
+    call.env.WORKBOARD_W3_EXISTING_THREAD_NAME_PREFIX = 'Windows Workboard 验收 ';
+    const evidence = await main({ ...call, safetyRuntime, createBridge: () => fake.bridge, buildTurnStartParams, output, terminal: vi.fn() });
+    expect(evidence).toMatchObject({ result: 'PASS', existingThreadLocated: true, readExistingCompleted: true });
+    expect(fake.bridge.listThreads).toHaveBeenCalledTimes(1);
+    expect(fake.bridge.readThread).toHaveBeenCalledWith('thread-target');
+    const serialized = JSON.stringify(output.mock.calls.at(-1)[0]);
+    expect(serialized).not.toContain('thread-target');
+    expect(serialized).not.toContain('Windows Workboard');
+    expect(serialized).not.toContain('private body');
+  });
+
+  it.each([
+    ['no match', [{ id: 'thread-other', name: '其他会话' }]],
+    ['multiple matches', [
+      { id: 'thread-a', name: 'Windows Workboard 验收 A' },
+      { id: 'thread-b', name: 'Windows Workboard 验收 B' },
+    ]],
+  ])('refuses name-based read before body access when there is %s', async (_label, listed) => {
+    const fake = fakeBridge({ listThreads: vi.fn(async () => listed), readThread: vi.fn() });
+    const call = invocation('read-existing');
+    delete call.env.WORKBOARD_W3_EXISTING_THREAD_ID;
+    call.env.WORKBOARD_W3_EXISTING_THREAD_NAME_PREFIX = 'Windows Workboard 验收 ';
+    const output = vi.fn();
+    const terminal = vi.fn();
+    await expect(main({ ...call, safetyRuntime, createBridge: () => fake.bridge, buildTurnStartParams, output, terminal }))
+      .rejects.toThrow('未唯一定位');
+    expect(fake.bridge.readThread).not.toHaveBeenCalled();
+    expect(fake.bridge.stop).toHaveBeenCalledTimes(1);
+    expect(fake.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(output.mock.calls.at(-1)[0]).toMatchObject({ result: 'FAIL', existingThreadLocated: false, readExistingCompleted: false });
+    expect(terminal).toHaveBeenCalledWith(expect.stringContaining('read-existing 未完成'));
+    expect(terminal.mock.calls[0][0]).not.toContain('已唯一定位并只读');
+  });
+
+  it.each([
+    ['read failure', vi.fn(async () => { throw new Error('private read failure'); })],
+    ['wrong returned id', vi.fn(async () => ({ id: 'thread-wrong', turns: [{ text: 'private body' }] }))],
+  ])('reports an honest non-leaking terminal result on %s', async (_label, readThread) => {
+    const fake = fakeBridge({
+      listThreads: vi.fn(async () => [{ id: 'thread-target', name: 'Windows Workboard 验收 target' }]),
+      readThread,
+    });
+    const call = invocation('read-existing');
+    delete call.env.WORKBOARD_W3_EXISTING_THREAD_ID;
+    call.env.WORKBOARD_W3_EXISTING_THREAD_NAME_PREFIX = 'Windows Workboard 验收 ';
+    const output = vi.fn();
+    const terminal = vi.fn();
+    await expect(main({ ...call, safetyRuntime, createBridge: () => fake.bridge, buildTurnStartParams, output, terminal })).rejects.toThrow();
+    expect(fake.bridge.stop).toHaveBeenCalledTimes(1);
+    expect(fake.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(output.mock.calls.at(-1)[0]).toMatchObject({ result: 'FAIL', existingThreadLocated: false, readExistingCompleted: false });
+    expect(terminal).toHaveBeenCalledWith(expect.stringContaining('read-existing 未完成'));
+    const terminalText = terminal.mock.calls[0][0];
+    expect(terminalText).not.toContain('thread-target');
+    expect(terminalText).not.toContain('thread-wrong');
+    expect(terminalText).not.toContain('private');
+    expect(terminalText).not.toContain('已唯一定位并只读');
   });
 
   it('lists current and archived conversations without models, turns, identifiers, or permission mutation', async () => {

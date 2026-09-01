@@ -25,7 +25,12 @@ function defaultOutput(value) {
 }
 
 function prerequisitesForScenario(scenario, env) {
-  if (scenario === 'read-existing') return { existingThreadId: env.WORKBOARD_W3_EXISTING_THREAD_ID };
+  if (scenario === 'read-existing') {
+    return {
+      existingThreadId: env.WORKBOARD_W3_EXISTING_THREAD_ID,
+      existingThreadNamePrefix: env.WORKBOARD_W3_EXISTING_THREAD_NAME_PREFIX,
+    };
+  }
   if (scenario === 'basic-create' || scenario === 'list-sync') return {};
   return { threadId: env.WORKBOARD_W3_QA_THREAD_ID };
 }
@@ -165,9 +170,19 @@ export function createLiveScenarioHandlers(context) {
       return { listSyncCompleted: true };
     },
     'read-existing': async () => {
-      const thread = await bridge.readThread(threadId);
-      if (thread?.id !== threadId) throw new Error('只读会话返回了不同标识');
-      return {};
+      let selectedThreadId = threadId;
+      if (context.existingThreadNamePrefix) {
+        const threads = await bridge.listThreads();
+        if (!Array.isArray(threads)) throw new Error('会话定位未返回目录列表');
+        const matches = threads.filter((thread) => typeof thread?.name === 'string'
+          && thread.name.startsWith(context.existingThreadNamePrefix));
+        if (matches.length !== 1) throw new Error('名称前缀未唯一定位到一个会话');
+        selectedThreadId = typeof matches[0]?.id === 'string' ? matches[0].id : '';
+        if (!selectedThreadId) throw new Error('唯一命中的会话缺少可读取标识');
+      }
+      const thread = await bridge.readThread(selectedThreadId);
+      if (thread?.id !== selectedThreadId) throw new Error('只读会话返回了不同标识');
+      return { existingThreadLocated: true, readExistingCompleted: true };
     },
     steer: async () => {
       const binding = await start('不要使用工具。请先准备一份较长的编号说明，在完成前等待后续引导。');
@@ -256,6 +271,8 @@ export async function main(dependencies = {}) {
   let effortConfigured = false;
   let serviceTierConfigured = false;
   let listSyncCompleted = false;
+  let existingThreadLocated = false;
+  let readExistingCompleted = false;
   let platformFamily = null;
   let platformOs = null;
   const capturePlatform = (target) => {
@@ -291,10 +308,13 @@ export async function main(dependencies = {}) {
     }
     const handlers = dependencies.scenarioHandlers ?? createLiveScenarioHandlers({
       bridge, queue, threadId, model, serviceTier, permissionPreset, workspace: config.workspace,
+      existingThreadNamePrefix: env.WORKBOARD_W3_EXISTING_THREAD_NAME_PREFIX,
       fallbackUserInputTimeoutMs, timeoutMarginMs,
     });
     const scenarioResult = await dispatchW3Scenario(config.scenario, handlers);
     listSyncCompleted = scenarioResult?.listSyncCompleted === true;
+    existingThreadLocated = scenarioResult?.existingThreadLocated === true;
+    readExistingCompleted = scenarioResult?.readExistingCompleted === true;
     capturePlatform(bridge);
     completed = true;
   } catch (error) {
@@ -321,13 +341,21 @@ export async function main(dependencies = {}) {
     effortConfigured,
     serviceTierConfigured,
     listSyncCompleted,
+    existingThreadLocated,
+    readExistingCompleted,
     cleanupFailed: Boolean(cleanupError),
     error: primaryError ?? cleanupError,
   });
   output(evidence);
   const terminalMessage = config.scenario === 'list-sync'
-    ? 'W3 场景 list-sync 已结束；只读取当前与归档会话目录，没有修改任何会话。'
-    : `W3 场景 ${config.scenario} 已结束；会话保持不变，精确会话标识：${threadId}`;
+    ? failed
+      ? 'W3 场景 list-sync 未完成；没有修改任何会话。'
+      : 'W3 场景 list-sync 已结束；只读取当前与归档会话目录，没有修改任何会话。'
+    : config.scenario === 'read-existing'
+      ? failed || !readExistingCompleted
+        ? 'W3 场景 read-existing 未完成；没有启动回合或修改会话。'
+        : 'W3 场景 read-existing 已结束；已唯一定位并只读目标会话，没有启动回合或修改会话。'
+      : `W3 场景 ${config.scenario} 已结束；目标会话保持不变。`;
   (dependencies.terminal ?? console.error)(terminalMessage);
   if (failed) throw primaryError ?? cleanupError ?? new Error('W3 场景未完成');
   return evidence;
