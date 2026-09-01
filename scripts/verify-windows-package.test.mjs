@@ -27,6 +27,20 @@ describe('Windows directory package inspection', () => {
     expect(() => main([root], () => {})).not.toThrow();
   });
 
+  it('rejects application test files inside app.asar', async () => {
+    const root = await fixture();
+    const application = mkdtempSync(path.join(os.tmpdir(), 'workboard-application-'));
+    mkdirSync(path.join(application, 'dist-electron'), { recursive: true });
+    mkdirSync(path.join(application, 'dist-renderer'), { recursive: true });
+    writeFileSync(path.join(application, 'package.json'), '{}');
+    writeFileSync(path.join(application, 'dist-electron', 'main.js'), 'main');
+    writeFileSync(path.join(application, 'dist-electron', 'preload.cjs'), 'preload');
+    writeFileSync(path.join(application, 'dist-electron', 'main.test.js'), 'test');
+    writeFileSync(path.join(application, 'dist-renderer', 'index.html'), 'renderer');
+    await createPackage(application, path.join(root, 'resources', 'app.asar'));
+    expect(() => main([root], () => {})).toThrow('不应包含应用测试');
+  });
+
   it('rejects an incomplete package or a bundled Codex executable', async () => {
     const incomplete = mkdtempSync(path.join(os.tmpdir(), 'workboard-package-'));
     expect(inspectWindowsPackage(incomplete).missing).toContain('Codex Workboard.exe');

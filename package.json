@@ -81,7 +81,9 @@
     "productName": "Codex Workboard",
     "asar": true,
     "files": [
-      "dist-electron/**/*",
+      "dist-electron/**/*.js",
+      "!dist-electron/**/*.test.js",
+      "dist-electron/preload.cjs",
       "dist-renderer/**/*",
       "package.json"
     ],
