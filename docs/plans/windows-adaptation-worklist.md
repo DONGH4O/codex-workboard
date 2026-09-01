@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-- 状态：`W3_REAL_BASIC_CREATE_AND_LIST_SYNC_PASS_PENDING_NEXT_SCENARIO_AUTHORIZATION`
+- 状态：`W4_SOURCE_AND_STATIC_PACKAGE_PASS_PENDING_REAL_PORTABLE_ACCEPTANCE`
 - 编制日期：2026-08-31
 - 上游仓库：https://github.com/Derekeee/codex-workboard
 - 本地只读基线：`F:\Project\workboard\source`
@@ -291,7 +291,7 @@ W1 独立审计记录（2026-08-31）：首轮审计发现离线启动仍会在�
 
 ## W3：App Server 交互与审批闭环
 
-状态：`REAL_BASIC_CREATE_AND_LIST_SYNC_PASS_PENDING_NEXT_SCENARIO_AUTHORIZATION`
+状态：`REAL_BASIC_CREATE_LIST_SYNC_AND_READ_EXISTING_PASS_PENDING_NEXT_SCENARIO_AUTHORIZATION`
 
 目的：在隔离测试项目和普通权限策略下验证真实 Codex 交互。
 
@@ -303,9 +303,9 @@ W1 独立审计记录（2026-08-31）：首轮审计发现离线启动仍会在�
 
 - [x] 先改造真实测试脚本：使用普通审批策略、强制隔离数据与项目目录、禁止自动删除对话，并把归档或删除决定留给用户。源码与隔离测试已通过；`basic-create` 和 `list-sync` 已分别按单场景授权执行，其余真实入口仍受门禁。
 - [x] 在连接 App Server 前生成并展示脚本实际使用的审批策略、沙盒模式、网络开关和可写目录。参数生成与拒绝路径已通过隔离测试；界面人工确认仍待真实验收。
-- [ ] 初始化一次连接并确认平台信息。平台字段的最小证据白名单和成功/失败收口已通过纯隔离测试；仍需在下一获准真实场景中记录实际 `platformFamily`、`platformOs` 后验收。
+- [x] 初始化一次连接并确认平台信息。`read-existing` 真实只读场景记录的 `platformFamily` 与 `platformOs` 均为 `windows`，字段经过最小白名单约束。
 - [x] 同步当前与归档对话，验证分页和来源类型。`list-sync` 真实场景已完成当前与归档两路分页，并使用固定的完整 10 种来源类型集合；未保存目录内容或会话标识。
-- [ ] 读取一个用户指定的现有测试对话，不修改其内容。
+- [x] 读取一个用户指定的现有测试对话，不修改其内容。按用户授权的名称前缀只在目录元数据中定位，恰好唯一命中后只读目标；未启动回合、未修改会话，证据不含名称、标识或正文。
 - [x] 创建名称明确的 Windows 验收会话并发送首条任务指令。`basic-create` 真实场景通过，会话已保留。
 - [x] 验证模型、思考深度、服务档位和工作目录正确传递。`basic-create` 证据中的四项传递结果均为真。
 - [ ] 验证流式消息、计划、命令输出和文件变更展示。
@@ -344,29 +344,31 @@ W3 平台信息最小证据链记录（2026-09-01）：后续获准的 `basic-cr
 
 W3 重启状态一致性源码记录（2026-09-01）：修复应用启动收敛时执行快照已标记为 `interrupted`、关联任务却仍显示 `running` 的矛盾。在同一 `BEGIN IMMEDIATE` 事务内，活动快照保留计划、最新消息、终端输出、diff 和当前项，清理已失效的审批与用户输入，并把非终态、非归档关联任务统一转为 `execution/blocked`，写入一次重启中断审计事件；已验收、已关闭或已归档任务不被重开。关闭数据库、重开、收敛、再次重开的持久化测试和幂等测试通过。全量测试 129/129、W3 定向测试 64/64 和生产构建通过，固定审计 PASS。本轮没有启动 Electron 或 App Server，因此真实 Workboard 重启与界面读回仍未完成。详细证据位于外层 `reports/W3-preflight/w3-restart-consistency-evidence.md`。
 
+W3 `read-existing` 单场景真实验收记录（2026-09-01）：固定 CLI、`CODEX_HOME` 和 W3 隔离路径通过门禁；脚本先分页读取会话目录元数据，用用户授权的名称前缀要求恰好唯一命中，再只读该目标会话。结果为 `PASS/completed`，平台字段均为 `windows`；未调用模型列表、未配置权限、未启动回合、未创建或修改会话，桥接清理成功。机器证据和终端不包含会话名称、标识或正文。独立审计 PASS；该结果不等于完整 `REAL_INTERACTION_PASS`。
+
 ---
 
 ## W4：Windows 打包、数据目录与可逆运行
 
-状态：`PENDING_W3_ACCEPTANCE`
+状态：`SOURCE_AND_STATIC_PACKAGE_PASS_PENDING_REAL_PORTABLE_ACCEPTANCE`
 
 拟改造项：
 
-- [ ] 在 `package.json` 增加 Windows x64 的 `pack:win` 与 `dist:win`。
-- [ ] 配置 Windows 图标、产品名、应用标识和清晰的产物命名。
-- [ ] 首先生成 `win-unpacked` 或便携版，不立即安装。
-- [ ] 确认打包结果包含渲染器、主进程、preload 和固定 Codex 驱动所需文件。
-- [ ] 开发验收始终使用独立 `WORKBOARD_USER_DATA_DIR`。
-- [ ] 提供 start、status、stop 和数据位置说明；停止命令必须确认只结束 Workboard 自己启动的进程。
-- [ ] 编写备份与恢复说明，覆盖完整数据目录、SQLite 主数据库、存在时的 WAL/SHM 辅助文件和附件目录。
-- [ ] 备份前先正常关闭应用和数据库；关闭后复制完整数据目录，不能只复制仍在写入的主数据库文件，也不能假定 WAL/SHM 文件一定存在或一定消失。
+- [x] 在 `package.json` 增加 Windows x64 的 `pack:win` 与 `dist:win`。本阶段只运行 `pack:win`，未运行 `dist:win`。
+- [x] 配置 Windows 图标、产品名、应用标识和清晰的产物命名。
+- [x] 首先生成 `win-unpacked` 或便携版，不立即安装。已生成 `dist/win-unpacked`，未安装、未启动。
+- [x] 确认打包结果包含渲染器、主进程、preload 和固定 Codex 驱动所需文件。`app.asar` 仅含生产入口与依赖，方案 A 的 Codex CLI 保持外部前置且未捆绑。
+- [x] 开发验收始终使用独立 `WORKBOARD_USER_DATA_DIR`。源码启动器、测试和文档均保持显式隔离；真实目录包启动仍待授权。
+- [x] 提供 start、status、stop 和数据位置说明；停止命令必须确认只结束 Workboard 自己启动的进程。源码与假进程隔离测试通过，真实目录包重复运行仍待验收。
+- [x] 编写备份与恢复说明，覆盖完整数据目录、SQLite 主数据库、存在时的 WAL/SHM 辅助文件和附件目录。
+- [x] 备份前先正常关闭应用和数据库；关闭后复制完整数据目录，不能只复制仍在写入的主数据库文件，也不能假定 WAL/SHM 文件一定存在或一定消失。共享 writer/backup 闸门、退出屏障与隔离复制测试通过。
 - [ ] 把备份恢复到第二个隔离目录，实际启动便携版并核对任务数量、分类、执行记录和附件可读性；恢复演练不覆盖原测试目录。
-- [ ] 将每日维护脚本中的 macOS 数据目录假设改为跨平台解析，或要求显式传入 `WORKBOARD_USER_DATA_DIR`。
-- [ ] 在安装版升级验收前补充数据库版本与受控迁移；迁移失败时保留旧数据可用状态。
-- [ ] 明确未签名本地版本的 Windows 提示，不把未签名个人版本描述为正式公开发行版。
-- [ ] NSIS 卸载默认保留用户数据；若未来提供“同时删除数据”的选项，必须展示准确目录并由用户主动选择。
-- [ ] 将发布检查脚本改为按平台验证 macOS 与 Windows 目标，不能继续只接受 macOS 产物。
-- [ ] 更新 README、PRODUCT、DESIGN、SECURITY、CONTRIBUTING 和问题模板，如实说明 Windows 支持、数据目录和未签名边界。
+- [x] 将每日维护脚本中的 macOS 数据目录假设改为跨平台解析，或要求显式传入 `WORKBOARD_USER_DATA_DIR`。
+- [x] 在安装版升级验收前补充数据库版本与受控迁移；迁移失败时保留旧数据可用状态。未来版本在任何持久设置前拒绝，旧库迁移位于单一事务。
+- [x] 明确未签名本地版本的 Windows 提示，不把未签名个人版本描述为正式公开发行版。实物签名状态为 `NotSigned`。
+- [x] NSIS 卸载默认保留用户数据；若未来提供“同时删除数据”的选项，必须展示准确目录并由用户主动选择。配置已完成，NSIS 未运行。
+- [x] 将发布检查脚本改为按平台验证 macOS 与 Windows 目标，不能继续只接受 macOS 产物。
+- [x] 更新 README、PRODUCT、DESIGN、SECURITY、CONTRIBUTING 和问题模板，如实说明 Windows 支持、数据目录和未签名边界。
 
 自动验收：
 
@@ -382,6 +384,8 @@ W3 重启状态一致性源码记录（2026-09-01）：修复应用启动收敛�
 - [ ] 用户在物理显示器上检查窗口、通知、审批卡和 Codex 深链接。
 - [ ] 用户确认数据目录和停用方式可接受。
 - [ ] 用户确认卸载后默认保留数据的策略以及手动清理位置。
+
+W4 源码、隔离测试与 Windows x64 目录包静态验收记录（2026-09-01）：新增 Windows `pack:win` 与未执行的 `dist:win` 配置、未签名与卸载保留数据边界、跨平台数据目录、共享 writer/backup 数据闸门、异步退出屏障、可验证的 start/status/stop、完整目录备份与新目录恢复、SQLite schema 版本和事务迁移、平台发布检查与用户文档。运行控制隔离测试覆盖进程创建时间、可执行文件、数据目录、运行编号、命名管道、stale 状态、并发锁、优雅停止、二次身份校验和精确进程树回退；备份恢复测试覆盖文件清单、WAL/SHM、附件、核心表、关系、分类、审计动作顺序和失败回滚。全量测试 175/175、生产构建和发布检查通过。首次目录打包因沙箱网络权限拒绝而未完成；在相同授权范围内允许构建依赖下载后重跑成功。首个包因包含编译出的应用测试文件被主动判为不接受；收紧白名单并增强验证器后重新打包，最终 `dist/win-unpacked` 静态审计 PASS：x64、未签名、生产入口齐全、未捆绑 Codex CLI、无安装器、无项目测试/声明/源码/报告/账号或运行数据。未运行 NSIS，未启动目录包，真实 start/status/stop、数据落点、停止后资源、恢复目录启动读回和物理界面验收仍为 `PENDING`。详细证据位于外层 `reports/W4/w4-source-static-package-evidence.md`。
 
 阶段停止与回滚边界：W4 只交付未安装的目录版或便携版并停止；不运行 NSIS 安装程序。代码回滚使用后续还原提交，产物和隔离数据默认保留到用户确认清理，不触碰正式 `%APPDATA%\Codex Workboard`。
 
