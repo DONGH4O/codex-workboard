@@ -215,12 +215,20 @@ describe('TaskStore', () => {
   });
 
   it('marks unfinished execution as interrupted after restart while retaining evidence', () => {
-    const db = store();
-    const task = db.create({ title: '恢复执行证据', lane: 'execution', threadId: 'thread-restart' });
-    db.saveExecutionSnapshot({
+    const dir = mkdtempSync(path.join(tmpdir(), 'codex-taskboard-restart-'));
+    testDirs.push(dir);
+    const databasePath = path.join(dir, 'tasks.sqlite');
+    const first = new TaskStore(databasePath);
+    const task = first.create({ title: '恢复执行证据', lane: 'execution', threadId: 'thread-restart' });
+    first.markExecutionStarted(task.id, 'turn-restart');
+    first.saveExecutionSnapshot({
       ...emptyExecutionSnapshot({ taskId: task.id, threadId: 'thread-restart', turnId: 'turn-restart' }),
       status: 'waiting_approval',
+      plan: [{ step: '保留计划', status: 'inProgress' }],
+      lastMessage: '保留的最新进展',
       output: '保留的终端输出',
+      diff: '+ 保留的文件变化',
+      currentItem: { type: 'commandExecution', command: 'npm test' },
       pendingApproval: {
         requestId: 7,
         method: 'item/commandExecution/requestApproval',
@@ -238,9 +246,31 @@ describe('TaskStore', () => {
         responseSubmitted: false,
       },
     });
-    expect(db.expireLiveExecutions()).toBe(1);
-    expect(db.getExecutionSnapshot(task.id)).toMatchObject({ status: 'interrupted', output: '保留的终端输出', pendingApproval: null });
-    db.close();
+    first.close();
+
+    const recovered = new TaskStore(databasePath);
+    expect(recovered.expireLiveExecutions()).toBe(1);
+    recovered.close();
+
+    const readback = new TaskStore(databasePath);
+    expect(readback.getExecutionSnapshot(task.id)).toMatchObject({
+      status: 'interrupted',
+      plan: [{ step: '保留计划', status: 'inProgress' }],
+      lastMessage: '保留的最新进展',
+      output: '保留的终端输出',
+      diff: '+ 保留的文件变化',
+      currentItem: { type: 'commandExecution', command: 'npm test' },
+      pendingApproval: null,
+      pendingUserInput: null,
+      error: 'Workboard 已重启，保留上次执行记录；继续任务将创建新回合。',
+    });
+    expect(readback.get(task.id)).toMatchObject({ lane: 'execution', substatus: 'blocked' });
+    expect(readback.listEvents(task.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ actorRole: 'system', action: 'execution_interrupted_on_restart', note: expect.stringContaining('执行证据已保留') }),
+    ]));
+    expect(readback.expireLiveExecutions()).toBe(0);
+    expect(readback.listEvents(task.id).filter((event) => event.action === 'execution_interrupted_on_restart')).toHaveLength(1);
+    readback.close();
   });
 
   it('persists string-id user input requests and clears them after restart', () => {
@@ -261,6 +291,26 @@ describe('TaskStore', () => {
     expect(db.getExecutionSnapshot(task.id)?.pendingUserInput?.requestId).toBe('request-input');
     expect(db.expireLiveExecutions()).toBe(1);
     expect(db.getExecutionSnapshot(task.id)).toMatchObject({ status: 'interrupted', pendingUserInput: null });
+    db.close();
+  });
+
+  it('interrupts stale snapshots without reopening terminal or archived tasks', () => {
+    const db = store();
+    const review = db.create({ title: '已验收任务', lane: 'review', threadId: 'thread-accepted', executor: '执行角色' });
+    const accepted = db.review(review.id, { auditor: '审计角色', decision: 'accepted', note: '已经验收' });
+    const archiveCandidate = db.create({ title: '已归档任务', lane: 'execution', threadId: 'thread-archived' });
+    const archived = db.archiveTask(archiveCandidate.id);
+    db.saveExecutionSnapshot({ ...emptyExecutionSnapshot({ taskId: accepted.id, threadId: 'thread-accepted' }), status: 'running' });
+    db.saveExecutionSnapshot({ ...emptyExecutionSnapshot({ taskId: archived.id, threadId: 'thread-archived' }), status: 'waiting_input' });
+
+    expect(db.expireLiveExecutions()).toBe(2);
+    expect(db.get(accepted.id)).toMatchObject({ lane: 'review', substatus: 'accepted', archivedAt: null });
+    expect(db.get(archived.id)).toMatchObject({ lane: 'execution', substatus: 'claimed' });
+    expect(db.get(archived.id).archivedAt).not.toBeNull();
+    expect(db.getExecutionSnapshot(accepted.id)?.status).toBe('interrupted');
+    expect(db.getExecutionSnapshot(archived.id)?.status).toBe('interrupted');
+    expect(db.listEvents(accepted.id).some((event) => event.action === 'execution_interrupted_on_restart')).toBe(false);
+    expect(db.listEvents(archived.id).some((event) => event.action === 'execution_interrupted_on_restart')).toBe(false);
     db.close();
   });
 

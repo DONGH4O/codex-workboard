@@ -394,10 +394,27 @@ export class TaskStore {
 
   expireLiveExecutions(): number {
     const now = new Date().toISOString();
-    const result = this.db.prepare(`UPDATE execution_snapshots SET status='interrupted',completed_at=?,updated_at=?,
-      pending_approval_json=NULL,pending_user_input_json=NULL,error=CASE WHEN error='' THEN 'Workboard 已重启，保留上次执行记录；继续任务将创建新回合。' ELSE error END
-      WHERE status IN ('running','waiting_approval','waiting_input')`).run(now, now);
-    return Number(result.changes ?? 0);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const active = this.db.prepare(`SELECT e.task_id,e.turn_id,t.lane,t.substatus,t.archived_at
+        FROM execution_snapshots e JOIN tasks t ON t.id=e.task_id
+        WHERE e.status IN ('running','waiting_approval','waiting_input')`).all() as Row[];
+      const result = this.db.prepare(`UPDATE execution_snapshots SET status='interrupted',completed_at=?,updated_at=?,
+        pending_approval_json=NULL,pending_user_input_json=NULL,error=CASE WHEN error='' THEN 'Workboard 已重启，保留上次执行记录；继续任务将创建新回合。' ELSE error END
+        WHERE status IN ('running','waiting_approval','waiting_input')`).run(now, now);
+      for (const row of active) {
+        if (row.archived_at !== null || row.substatus === 'accepted' || row.substatus === 'closed') continue;
+        this.db.prepare("UPDATE tasks SET lane='execution',substatus='blocked',end_at=NULL,updated_at=? WHERE id=?").run(now, row.task_id);
+        if (row.lane !== 'execution') this.addEvent(String(row.task_id), 'system', 'lane_changed', `${String(row.lane)} → execution`);
+        const turn = row.turn_id ? `Codex 回合 ${String(row.turn_id)}` : 'Codex 执行';
+        this.addEvent(String(row.task_id), 'system', 'execution_interrupted_on_restart', `${turn} 因 Workboard 重启标记为中断，执行证据已保留`);
+      }
+      this.db.exec('COMMIT');
+      return Number(result.changes ?? 0);
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   bulkCreateFromConversations(): BulkTaskResult {
