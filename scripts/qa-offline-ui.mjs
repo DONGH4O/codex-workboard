@@ -133,7 +133,8 @@ async function run() {
         platformClass: shell?.className || '',
         dragDisplay: drag ? getComputedStyle(drag).display : '',
         sidebarPaddingTop: sidebar ? getComputedStyle(sidebar).paddingTop : '',
-        offline: document.body.innerText.includes('Codex 未连接'),
+        connected: Boolean(document.querySelector('.connection-dot.online')),
+        diagnosticVisible: ['尚未启动', '驱动版本不兼容', '需要登录', '协议不兼容', '连接错误'].some((label) => document.body.innerText.includes(label)),
         stale: document.body.innerText.includes('Codex 缓存模式'),
         demoLoaded: document.body.innerText.includes('在关联对话中继续执行'),
       };
@@ -146,7 +147,7 @@ async function run() {
   if (process.platform === 'win32' && (result.dragDisplay !== 'none' || result.sidebarPaddingTop !== '12px')) {
     throw new Error(`Windows 标题栏布局不正确：${JSON.stringify(result)}`);
   }
-  if (!result.offline || result.stale || !result.demoLoaded) throw new Error(`离线状态不正确：${JSON.stringify(result)}`);
+  if (result.connected || !result.diagnosticVisible || result.stale || !result.demoLoaded) throw new Error(`离线状态不正确：${JSON.stringify(result)}`);
 
   void request('Page.close').catch(() => undefined);
   debug('last-window-close-sent');
@@ -161,7 +162,8 @@ async function run() {
     platformClass: result.platformClass,
     dragDisplay: result.dragDisplay,
     sidebarPaddingTop: result.sidebarPaddingTop,
-    offline: result.offline,
+    connected: result.connected,
+    diagnosticVisible: result.diagnosticVisible,
     stale: result.stale,
     demoLoaded: result.demoLoaded,
     isolatedData: true,

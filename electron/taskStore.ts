@@ -175,6 +175,7 @@ export class TaskStore {
         diff_text TEXT NOT NULL DEFAULT '',
         current_item_json TEXT,
         pending_approval_json TEXT,
+        pending_user_input_json TEXT,
         error TEXT NOT NULL DEFAULT ''
       );
       CREATE INDEX IF NOT EXISTS idx_execution_thread_updated ON execution_snapshots(thread_id, updated_at DESC);
@@ -189,6 +190,7 @@ export class TaskStore {
     const executionColumns = this.db.prepare('PRAGMA table_info(execution_snapshots)').all() as Array<{ name: string }>;
     if (!executionColumns.some((column) => column.name === 'approval_policy')) this.db.exec("ALTER TABLE execution_snapshots ADD COLUMN approval_policy TEXT NOT NULL DEFAULT 'untrusted'");
     if (!executionColumns.some((column) => column.name === 'service_tier')) this.db.exec('ALTER TABLE execution_snapshots ADD COLUMN service_tier TEXT');
+    if (!executionColumns.some((column) => column.name === 'pending_user_input_json')) this.db.exec('ALTER TABLE execution_snapshots ADD COLUMN pending_user_input_json TEXT');
     this.db.exec(`
       UPDATE tasks SET start_at=COALESCE(start_at,
         (SELECT strftime('%Y-%m-%dT%H:%M:%fZ', c.created_at_epoch, 'unixepoch') FROM conversations c WHERE c.id=tasks.thread_id),
@@ -279,6 +281,7 @@ export class TaskStore {
       if (typeof value !== 'string' || !value) return fallback;
       try { return JSON.parse(value) as T; } catch { return fallback; }
     };
+    const pendingApproval = parse<ExecutionSnapshot['pendingApproval']>(row.pending_approval_json, null);
     return {
       taskId: String(row.task_id),
       threadId: String(row.thread_id),
@@ -296,7 +299,14 @@ export class TaskStore {
       output: String(row.output_tail ?? ''),
       diff: String(row.diff_text ?? ''),
       currentItem: parse(row.current_item_json, null),
-      pendingApproval: parse(row.pending_approval_json, null),
+      pendingApproval: pendingApproval ? {
+        ...pendingApproval,
+        networkProtocol: pendingApproval.networkProtocol ?? '',
+        unsupportedDecisionCount: pendingApproval.unsupportedDecisionCount ?? 0,
+        unsupportedDecisions: pendingApproval.unsupportedDecisions ?? [],
+        responseSubmitted: pendingApproval.responseSubmitted ?? false,
+      } : null,
+      pendingUserInput: parse(row.pending_user_input_json, null),
       error: String(row.error ?? ''),
     };
   }
@@ -315,17 +325,18 @@ export class TaskStore {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db.prepare(`INSERT INTO execution_snapshots (
-      task_id,thread_id,turn_id,status,model,effort,service_tier,approval_policy,started_at,updated_at,completed_at,plan_json,last_message,output_tail,diff_text,current_item_json,pending_approval_json,error
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      task_id,thread_id,turn_id,status,model,effort,service_tier,approval_policy,started_at,updated_at,completed_at,plan_json,last_message,output_tail,diff_text,current_item_json,pending_approval_json,pending_user_input_json,error
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(task_id) DO UPDATE SET
       thread_id=excluded.thread_id,turn_id=excluded.turn_id,status=excluded.status,model=excluded.model,effort=excluded.effort,service_tier=excluded.service_tier,approval_policy=excluded.approval_policy,
       started_at=excluded.started_at,updated_at=excluded.updated_at,completed_at=excluded.completed_at,plan_json=excluded.plan_json,
       last_message=excluded.last_message,output_tail=excluded.output_tail,diff_text=excluded.diff_text,current_item_json=excluded.current_item_json,
-      pending_approval_json=excluded.pending_approval_json,error=excluded.error`).run(
+      pending_approval_json=excluded.pending_approval_json,pending_user_input_json=excluded.pending_user_input_json,error=excluded.error`).run(
       snapshot.taskId, snapshot.threadId, snapshot.turnId, snapshot.status, snapshot.model, snapshot.effort, snapshot.serviceTier, snapshot.permissionPreset,
       snapshot.startedAt, snapshot.updatedAt, snapshot.completedAt, JSON.stringify(snapshot.plan), snapshot.lastMessage,
       snapshot.output, snapshot.diff, snapshot.currentItem ? JSON.stringify(snapshot.currentItem) : null,
-      snapshot.pendingApproval ? JSON.stringify(snapshot.pendingApproval) : null, snapshot.error,
+      snapshot.pendingApproval ? JSON.stringify(snapshot.pendingApproval) : null,
+      snapshot.pendingUserInput ? JSON.stringify(snapshot.pendingUserInput) : null, snapshot.error,
       );
       if (!task.threadId && snapshot.threadId) {
         this.db.prepare('UPDATE tasks SET thread_id=?,updated_at=? WHERE id=?').run(snapshot.threadId, snapshot.updatedAt, snapshot.taskId);
@@ -384,8 +395,8 @@ export class TaskStore {
   expireLiveExecutions(): number {
     const now = new Date().toISOString();
     const result = this.db.prepare(`UPDATE execution_snapshots SET status='interrupted',completed_at=?,updated_at=?,
-      pending_approval_json=NULL,error=CASE WHEN error='' THEN 'Workboard 已重启，保留上次执行记录；继续任务将创建新回合。' ELSE error END
-      WHERE status IN ('running','waiting_approval')`).run(now, now);
+      pending_approval_json=NULL,pending_user_input_json=NULL,error=CASE WHEN error='' THEN 'Workboard 已重启，保留上次执行记录；继续任务将创建新回合。' ELSE error END
+      WHERE status IN ('running','waiting_approval','waiting_input')`).run(now, now);
     return Number(result.changes ?? 0);
   }
 

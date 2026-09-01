@@ -54,6 +54,10 @@ describe('execution tracker', () => {
     expect(state.status).toBe('waiting_approval');
     expect(state.pendingApproval).toMatchObject({ requestId: 42, command: 'npm test', cwd: '/tmp/project' });
 
+    state = reduceExecutionSnapshot(state, { method: 'workboard/serverRequestResponseSubmitted', params: { requestId: 42 } });
+    expect(state.status).toBe('waiting_approval');
+    expect(state.pendingApproval?.responseSubmitted).toBe(true);
+
     state = reduceExecutionSnapshot(state, { method: 'serverRequest/resolved', params: { requestId: 42 } });
     expect(state.status).toBe('running');
     expect(state.pendingApproval).toBeNull();
@@ -64,5 +68,65 @@ describe('execution tracker', () => {
     }, '2026-08-10T10:05:00.000Z');
     expect(state.status).toBe('completed');
     expect(state.completedAt).toBe('2026-08-10T10:05:00.000Z');
+  });
+
+  it('tracks string request ids, user input answers and local cancellation', () => {
+    let state = emptyExecutionSnapshot({ taskId: 'task-3', threadId: 'thread-3', turnId: 'turn-3' });
+    state = reduceExecutionSnapshot(state, {
+      method: 'item/tool/requestUserInput',
+      requestId: 'request-a',
+      params: {
+        threadId: 'thread-3',
+        turnId: 'turn-3',
+        itemId: 'item-3',
+        isBlocking: true,
+        questions: [{ id: 'choice', header: '方案', question: '选择方案', isOther: false, isSecret: false, options: [{ label: 'A', description: '推荐' }] }],
+      },
+    });
+    expect(state).toMatchObject({
+      status: 'waiting_input',
+      pendingUserInput: { requestId: 'request-a', questions: [{ id: 'choice', options: [{ label: 'A', description: '推荐' }] }] },
+    });
+    state = reduceExecutionSnapshot(state, { method: 'workboard/serverRequestClosed', params: { requestId: 'request-a', reason: 'cancelled' } });
+    expect(state.status).toBe('running');
+    expect(state.pendingUserInput).toBeNull();
+  });
+
+  it('keeps execution running for a non-blocking user input request', () => {
+    const state = reduceExecutionSnapshot(emptyExecutionSnapshot({ taskId: 'task-nonblocking', threadId: 'thread-nonblocking' }), {
+      method: 'item/tool/requestUserInput',
+      requestId: 'request-nonblocking',
+      params: { threadId: 'thread-nonblocking', turnId: 'turn-nonblocking', itemId: 'item', isBlocking: false, questions: [] },
+    });
+    expect(state.status).toBe('running');
+    expect(state.pendingUserInput).toMatchObject({ requestId: 'request-nonblocking', isBlocking: false });
+  });
+
+  it('does not mistake permissions requests for decision approvals and preserves network protocol', () => {
+    let state = emptyExecutionSnapshot({ taskId: 'task-4', threadId: 'thread-4', turnId: 'turn-4' });
+    state = reduceExecutionSnapshot(state, {
+      method: 'item/permissions/requestApproval',
+      requestId: 'permissions-1',
+      params: { threadId: 'thread-4', turnId: 'turn-4', permissions: {} },
+    });
+    expect(state.pendingApproval).toBeNull();
+
+    state = reduceExecutionSnapshot(state, {
+      method: 'item/commandExecution/requestApproval',
+      requestId: 'network-1',
+      params: {
+        threadId: 'thread-4',
+        turnId: 'turn-4',
+        networkApprovalContext: { host: 'example.com', protocol: 'https' },
+        availableDecisions: ['accept', { applyNetworkPolicyAmendment: {} }, 'decline'],
+      },
+    });
+    expect(state.pendingApproval).toMatchObject({ requestId: 'network-1', networkHost: 'example.com', networkProtocol: 'https', unsupportedDecisionCount: 1, unsupportedDecisions: [{ applyNetworkPolicyAmendment: {} }] });
+    state = reduceExecutionSnapshot(state, { method: 'workboard/serverRequestUnsupported', requestId: 'unrelated', params: { requestId: 'unrelated', method: 'unknown/method' } });
+    expect(state.status).toBe('waiting_approval');
+    expect(state.pendingApproval?.requestId).toBe('network-1');
+    state = reduceExecutionSnapshot(state, { method: 'serverRequest/resolved', params: { requestId: 'different-request' } });
+    expect(state.status).toBe('waiting_approval');
+    expect(state.pendingApproval?.requestId).toBe('network-1');
   });
 });

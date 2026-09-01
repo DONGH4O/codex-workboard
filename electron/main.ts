@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CodexBridge, isThreadNotFoundError, type CodexBridgeEvent } from './codexBridge.js';
 import { loadBootstrapConversations } from './bootstrap.js';
-import { emptyExecutionSnapshot, eventThreadId, eventTurnId, reduceExecutionSnapshot, type ApprovalDecision, type ExecutionPermissionPreset, type ExecutionSnapshot } from './executionTracker.js';
+import { emptyExecutionSnapshot, eventThreadId, eventTurnId, reduceExecutionSnapshot, type ApprovalDecision, type ExecutionPermissionPreset, type ExecutionSnapshot, type RequestId } from './executionTracker.js';
 import { browserWindowPlatformOptions, shouldQuitWhenAllWindowsClose, shouldSkipCodexSync, WINDOWS_APP_USER_MODEL_ID } from './platform.js';
 import { TaskStore, type TaskInput } from './taskStore.js';
 
@@ -99,6 +99,8 @@ function handleBridgeEvent(event: CodexBridgeEvent): void {
     showNotification(next.status === 'completed' ? '任务进入验收' : '任务执行受阻', updatedTask.title);
   } else if (next.status === 'waiting_approval' && previous?.pendingApproval?.requestId !== next.pendingApproval?.requestId) {
     showNotification('任务等待审批', updatedTask.title);
+  } else if (next.pendingUserInput && previous?.pendingUserInput?.requestId !== next.pendingUserInput.requestId) {
+    showNotification('任务等待回答', updatedTask.title);
   }
   publishExecution(next, updatedTask);
   if (event.method === 'turn/completed' && turnId) turnTasks.delete(turnId);
@@ -263,7 +265,7 @@ function registerIpc(): void {
     const snapshot = store.getExecutionSnapshot(input.taskId);
     if (!task.threadId || task.threadId !== input.threadId) throw new Error('任务与关联对话不匹配');
     if (!snapshot || snapshot.threadId !== input.threadId || snapshot.turnId !== input.turnId) throw new Error('当前执行回合已变化，请刷新后重试');
-    if (snapshot.status === 'waiting_approval' || snapshot.pendingApproval) throw new Error('请先处理当前审批，再继续引导对话');
+    if (snapshot.status === 'waiting_approval' || snapshot.status === 'waiting_input' || snapshot.pendingApproval || snapshot.pendingUserInput?.isBlocking) throw new Error('请先处理当前待答复请求，再继续引导对话');
     if (snapshot.status !== 'running') throw new Error('当前没有可引导的执行回合');
     const images = normalizeTurnImages(input.images);
     if (!input.text?.trim() && !images.length) throw new Error('请输入引导内容或添加截图');
@@ -277,13 +279,23 @@ function registerIpc(): void {
     }
   });
   ipcMain.handle('execution:get', (_event, taskId: string) => store.getExecutionSnapshot(taskId));
-  ipcMain.handle('execution:approval:respond', (_event, input: { taskId: string; requestId: number; decision: ApprovalDecision }) => {
+  ipcMain.handle('execution:approval:respond', (_event, input: { taskId: string; requestId: RequestId; decision: ApprovalDecision }) => {
     const snapshot = store.getExecutionSnapshot(input.taskId);
     if (!snapshot?.pendingApproval || snapshot.pendingApproval.requestId !== input.requestId) throw new Error('审批请求已失效');
     bridge.respondToApproval(input.requestId, input.decision);
-    const updated = store.saveExecutionSnapshot(reduceExecutionSnapshot(snapshot, { method: 'serverRequest/resolved', params: { requestId: input.requestId } }));
-    publishExecution(updated);
-    return updated;
+    return store.getExecutionSnapshot(input.taskId);
+  });
+  ipcMain.handle('execution:user-input:respond', (_event, input: { taskId: string; requestId: RequestId; answers: Record<string, { answers: string[] }> }) => {
+    const snapshot = store.getExecutionSnapshot(input.taskId);
+    if (!snapshot?.pendingUserInput || snapshot.pendingUserInput.requestId !== input.requestId) throw new Error('用户输入请求已失效');
+    bridge.respondToUserInput(input.requestId, input.answers);
+    return store.getExecutionSnapshot(input.taskId);
+  });
+  ipcMain.handle('execution:user-input:cancel', (_event, input: { taskId: string; requestId: RequestId }) => {
+    const snapshot = store.getExecutionSnapshot(input.taskId);
+    if (!snapshot?.pendingUserInput || snapshot.pendingUserInput.requestId !== input.requestId) throw new Error('用户输入请求已失效');
+    bridge.cancelUserInput(input.requestId);
+    return store.getExecutionSnapshot(input.taskId);
   });
   ipcMain.handle('threads:open', async (_event, threadId: string) => {
     if (!/^[a-zA-Z0-9-]+$/.test(threadId)) throw new Error('无效的对话 ID');
@@ -293,11 +305,11 @@ function registerIpc(): void {
     const task = store.get(input.taskId);
     if (!task.threadId || task.threadId !== input.threadId) throw new Error('任务与关联对话不匹配');
     const snapshot = store.getExecutionSnapshot(task.id);
-    const live = snapshot && snapshot.threadId === input.threadId && snapshot.turnId && (snapshot.status === 'running' || snapshot.status === 'waiting_approval');
+    const live = snapshot && snapshot.threadId === input.threadId && snapshot.turnId && (snapshot.status === 'running' || snapshot.status === 'waiting_approval' || snapshot.status === 'waiting_input');
     if (live && snapshot.turnId) {
       await bridge.interruptTurn(input.threadId, snapshot.turnId);
       const now = new Date().toISOString();
-      const interrupted = store.saveExecutionSnapshot({ ...snapshot, status: 'interrupted', pendingApproval: null, completedAt: now, updatedAt: now, error: '已由用户转到 Codex 继续' });
+      const interrupted = store.saveExecutionSnapshot({ ...snapshot, status: 'interrupted', pendingApproval: null, pendingUserInput: null, completedAt: now, updatedAt: now, error: '已由用户转到 Codex 继续' });
       const updatedTask = store.markExecutionFinished(task.id, 'interrupted', snapshot.turnId);
       store.recordConversationHandoff(task.id, input.threadId);
       publishExecution(interrupted, updatedTask);
@@ -480,7 +492,11 @@ app.whenReady().then(() => {
         command: 'npm test',
         cwd: '/demo/project',
         networkHost: '',
+        networkProtocol: '',
         availableDecisions: ['accept', 'acceptForSession', 'decline', 'cancel'],
+        unsupportedDecisionCount: 0,
+        unsupportedDecisions: [],
+        responseSubmitted: false,
       },
     });
     const steerDemo = store.create({
@@ -526,6 +542,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
-  bridge.stop();
+  void bridge.stop().catch(() => undefined);
   store?.close();
 });

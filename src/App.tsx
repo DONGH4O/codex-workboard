@@ -91,11 +91,21 @@ const executionStatusText: Record<ExecutionSnapshot['status'], string> = {
   idle: '尚未执行',
   running: '实时执行中',
   waiting_approval: '等待审批',
+  waiting_input: '等待回答',
   completed: '执行已完成',
   failed: '执行失败',
   interrupted: '执行已中断',
 };
 const effortText: Record<string, string> = { low: '低', medium: '中', high: '高', xhigh: '超高', max: '最高', ultra: '自动调度' };
+const codexStateText: Record<BootstrapData['codex']['state'], string> = {
+  idle: '尚未启动',
+  starting: '正在预检',
+  ready: '协议已就绪',
+  version_incompatible: '驱动版本不兼容',
+  auth_required: '需要登录',
+  protocol_incompatible: '协议不兼容',
+  error: '连接错误',
+};
 
 function threadTitle(thread: CodexThreadSummary): string {
   return thread.name?.trim() || thread.preview?.trim() || '未命名对话';
@@ -178,7 +188,7 @@ function App() {
     migratedTaskCount: 0,
     archivedTaskCount: 0,
   });
-  const [codex, setCodex] = useState<BootstrapData['codex']>({ connected: false, version: '-' });
+  const [codex, setCodex] = useState<BootstrapData['codex']>({ connected: false, state: 'idle', version: 'unknown', expectedVersion: 'unknown', accountChecked: false, modelListChecked: false });
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<AppView>('board');
   const [createOpen, setCreateOpen] = useState(false);
@@ -235,6 +245,7 @@ function App() {
     replaceTask(task);
     if (previous?.status !== snapshot.status) {
       if (snapshot.status === 'waiting_approval') setNotice({ tone: 'error', text: `“${task.title}”等待审批` });
+      if (snapshot.status === 'waiting_input') setNotice({ tone: 'error', text: `“${task.title}”等待回答` });
       if (snapshot.status === 'completed') setNotice({ tone: 'success', text: `“${task.title}”执行完成，已进入验收` });
       if (snapshot.status === 'failed' || snapshot.status === 'interrupted') setNotice({ tone: 'error', text: `“${task.title}”执行受阻，请查看实时执行` });
     }
@@ -287,13 +298,13 @@ function App() {
     const items = new Map<string, WorkboardNotification>();
     for (const task of tasks) {
       const execution = executions[task.id];
-      if (execution?.status === 'waiting_approval') {
+      if (execution?.status === 'waiting_approval' || execution?.status === 'waiting_input') {
         items.set(task.id, {
           id: `approval-${task.id}`,
           kind: 'approval',
           taskId: task.id,
           title: `等待审批：${task.title}`,
-          detail: execution.pendingApproval?.reason || 'Codex 正在等待你确认下一步操作',
+          detail: execution.pendingApproval?.reason || execution.pendingUserInput?.questions[0]?.question || 'Codex 正在等待你确认下一步操作',
           updatedAt: execution.updatedAt,
         });
         continue;
@@ -534,7 +545,7 @@ function App() {
   async function openTaskInCodex(task: Task) {
     if (!task.threadId) return;
     const execution = executionRef.current[task.id];
-    const live = execution?.status === 'running' || execution?.status === 'waiting_approval';
+    const live = execution?.status === 'running' || execution?.status === 'waiting_approval' || execution?.status === 'waiting_input';
     if (!live) {
       await window.codexTaskboard.openThreadInCodex(task.threadId);
       return;
@@ -627,11 +638,11 @@ function App() {
           {!projectOptions.length && <div className="empty-sidebar">等待 Codex 连接</div>}
         </div>
 
-        <div className="connection-card">
+        <div className="connection-card" title={[codex.error, codex.executablePath, codex.codexHome ? `CODEX_HOME: ${codex.codexHome}` : ''].filter(Boolean).join('\n')}>
           <span className={`connection-dot ${codex.connected && !sync.stale ? 'online' : ''}`} />
           <div>
-            <strong>{sync.stale ? 'Codex 缓存模式' : codex.connected ? 'Codex 已连接' : 'Codex 未连接'}</strong>
-            <small>{sync.stale ? `上次同步 ${sync.lastSyncedAt ? new Date(sync.lastSyncedAt).toLocaleString('zh-CN') : '未知'}` : codex.version}</small>
+            <strong>{sync.stale ? `Codex 缓存模式 · ${codexStateText[codex.state]}` : codex.connected ? 'Codex 已连接' : codexStateText[codex.state]}</strong>
+            <small>{sync.stale ? `上次同步 ${sync.lastSyncedAt ? new Date(sync.lastSyncedAt).toLocaleString('zh-CN') : '未知'} · ${codex.version}` : `${codex.version}${codex.source ? ` · ${codex.source}` : ''}`}</small>
           </div>
         </div>
       </aside>
@@ -991,7 +1002,7 @@ function BoardColumn({ lane, tasks, threads, executions, selectedIds, selectionM
           const execution = executions[task.id];
           const conversationThreadId = task.threadId || execution?.threadId || null;
           const linked = conversationThreadId ? threads.find((thread) => thread.id === conversationThreadId) : null;
-          const live = execution?.status === 'running' || execution?.status === 'waiting_approval';
+          const live = execution?.status === 'running' || execution?.status === 'waiting_approval' || execution?.status === 'waiting_input';
           return (
             <article
               className={`task-card ${selectedIds.has(task.id) ? 'is-selected' : ''}`}
@@ -1033,7 +1044,7 @@ function BoardColumn({ lane, tasks, threads, executions, selectedIds, selectionM
         <span className="task-context-label">移动到</span>
         {(Object.keys(laneMeta) as Lane[]).map((targetLane) => <button type="button" role="menuitemradio" aria-checked={contextTask.lane === targetLane} disabled={contextTask.lane === targetLane || contextTask.substatus === 'accepted' || contextTask.substatus === 'closed'} key={targetLane} onClick={() => runContextAction(() => void onMove(contextTask.id, targetLane))}><span>{laneMeta[targetLane].title}</span>{contextTask.lane === targetLane && <Check size={13} />}</button>)}
         <div className="task-context-divider" />
-        <button type="button" role="menuitem" disabled={!contextTask.threadId} onClick={() => { if (contextTask.threadId) onOpenThread(contextTask); setContextMenu(null); }}><span><ExternalLink size={13} />{executions[contextTask.id]?.status === 'running' || executions[contextTask.id]?.status === 'waiting_approval' ? '转到 Codex（中断当前回合）' : '在 Codex 中打开'}</span></button>
+        <button type="button" role="menuitem" disabled={!contextTask.threadId} onClick={() => { if (contextTask.threadId) onOpenThread(contextTask); setContextMenu(null); }}><span><ExternalLink size={13} />{executions[contextTask.id]?.status === 'running' || executions[contextTask.id]?.status === 'waiting_approval' || executions[contextTask.id]?.status === 'waiting_input' ? '转到 Codex（中断当前回合）' : '在 Codex 中打开'}</span></button>
         <button type="button" className="task-context-archive" role="menuitem" onClick={() => runContextAction(() => void onArchive(contextTask))}><span><Archive size={13} />归档任务</span><small>可撤销</small></button>
       </div>, document.body)}
     </div>
@@ -1159,6 +1170,8 @@ function TaskPanel({ task, thread, execution, onClose, onTaskChange, onArchive, 
   const [serviceTier, setServiceTier] = useState('');
   const [sending, setSending] = useState(false);
   const [approvalBusy, setApprovalBusy] = useState(false);
+  const [userInputBusy, setUserInputBusy] = useState(false);
+  const [userInputAnswers, setUserInputAnswers] = useState<Record<string, string>>({});
   const [handoffBusy, setHandoffBusy] = useState(false);
   const [clock, setClock] = useState(Date.now());
   const [reviewNote, setReviewNote] = useState('');
@@ -1171,10 +1184,10 @@ function TaskPanel({ task, thread, execution, onClose, onTaskChange, onArchive, 
   const messages = extractMessages(detail);
   const taskLocked = task.substatus === 'accepted' || task.substatus === 'closed';
   const linkedConversationAvailable = Boolean(conversationThreadId);
-  const executionBusy = execution?.status === 'running' || execution?.status === 'waiting_approval';
+  const executionBusy = execution?.status === 'running' || execution?.status === 'waiting_approval' || execution?.status === 'waiting_input';
   const steerReady = execution?.status === 'running' && Boolean(execution.turnId);
   const hasComposerInput = Boolean(message.trim() || attachments.length);
-  const composerDisabled = !linkedConversationAvailable || sending || taskLocked || execution?.status === 'waiting_approval' || (execution?.status === 'running' && !execution.turnId);
+  const composerDisabled = !linkedConversationAvailable || sending || taskLocked || execution?.status === 'waiting_approval' || execution?.status === 'waiting_input' || (execution?.status === 'running' && !execution.turnId);
   const reworkReady = task.lane === 'execution' && task.substatus === 'rework' && execution?.status === 'completed';
   const selectedModel = models.find((item) => item.id === model) ?? null;
   const effortOptions = selectedModel?.supportedReasoningEfforts ?? [];
@@ -1186,7 +1199,7 @@ function TaskPanel({ task, thread, execution, onClose, onTaskChange, onArchive, 
 
   useEffect(() => {
     setDetail(null);
-    setTab(execution?.status === 'running' || execution?.status === 'waiting_approval' ? 'execution' : 'task');
+    setTab(execution?.status === 'running' || execution?.status === 'waiting_approval' || execution?.status === 'waiting_input' ? 'execution' : 'task');
     setPermissionPreset(execution?.permissionPreset ?? 'untrusted');
     setReviewMode('user');
     setMessage('');
@@ -1212,10 +1225,14 @@ function TaskPanel({ task, thread, execution, onClose, onTaskChange, onArchive, 
   }, [task.id]);
 
   useEffect(() => {
-    if (execution?.status !== 'running' && execution?.status !== 'waiting_approval') return;
+    if (execution?.status !== 'running' && execution?.status !== 'waiting_approval' && execution?.status !== 'waiting_input') return;
     const timer = window.setInterval(() => setClock(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [execution?.status]);
+
+  useEffect(() => {
+    setUserInputAnswers({});
+  }, [execution?.pendingUserInput?.requestId]);
 
   useEffect(() => {
     if (tab !== 'thread' || !conversationThreadId || detail) return;
@@ -1413,6 +1430,28 @@ function TaskPanel({ task, thread, execution, onClose, onTaskChange, onArchive, 
     }
   }
 
+  async function closeUserInput(cancelled = false) {
+    if (!execution?.pendingUserInput) return;
+    setUserInputBusy(true);
+    try {
+      if (cancelled) {
+        await window.codexTaskboard.cancelUserInput({ taskId: task.id, requestId: execution.pendingUserInput.requestId });
+      } else {
+        const answers = Object.fromEntries(execution.pendingUserInput.questions.map((question) => [
+          question.id,
+          { answers: userInputAnswers[question.id]?.trim() ? [userInputAnswers[question.id].trim()] : [] },
+        ]));
+        await window.codexTaskboard.respondToUserInput({ taskId: task.id, requestId: execution.pendingUserInput.requestId, answers });
+      }
+      onNotice({ tone: cancelled ? 'error' : 'success', text: cancelled ? '已取消本次回答' : '已提交回答' });
+      setUserInputAnswers({});
+    } catch (error) {
+      onNotice({ tone: 'error', text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setUserInputBusy(false);
+    }
+  }
+
   return (
     <aside className="detail-panel">
       <div className="panel-header">
@@ -1485,8 +1524,16 @@ function TaskPanel({ task, thread, execution, onClose, onTaskChange, onArchive, 
             {execution?.pendingApproval && <section className="approval-card" aria-label="等待审批">
               <div className="approval-card-title"><ShieldCheck size={16} /><div><strong>需要你的审批</strong><span>{execution.pendingApproval.reason || 'Codex 请求执行受保护操作'}</span></div></div>
               {execution.pendingApproval.command && <code>{execution.pendingApproval.command}</code>}
-              <dl><div><dt>目录</dt><dd>{execution.pendingApproval.cwd || task.projectPath || '未提供'}</dd></div>{execution.pendingApproval.networkHost && <div><dt>网络目标</dt><dd>{execution.pendingApproval.networkHost}</dd></div>}</dl>
-              <div className="approval-actions">{execution.pendingApproval.availableDecisions.includes('decline') && <button type="button" className="secondary-button danger-text" disabled={approvalBusy} onClick={() => void respondApproval('decline')}>拒绝</button>}{execution.pendingApproval.availableDecisions.includes('acceptForSession') && <button type="button" className="secondary-button" disabled={approvalBusy} onClick={() => void respondApproval('acceptForSession')}>本次会话允许</button>}{execution.pendingApproval.availableDecisions.includes('accept') && <button type="button" className="primary-button" disabled={approvalBusy} onClick={() => void respondApproval('accept')}>{approvalBusy ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}批准一次</button>}</div>
+              <dl><div><dt>目录</dt><dd>{execution.pendingApproval.cwd || task.projectPath || '未提供'}</dd></div>{execution.pendingApproval.networkHost && <div><dt>网络目标</dt><dd>{execution.pendingApproval.networkProtocol ? `${execution.pendingApproval.networkProtocol}://` : ''}{execution.pendingApproval.networkHost}</dd></div>}</dl>
+              {execution.pendingApproval.unsupportedDecisionCount > 0 && <p className="execution-empty">另有 {execution.pendingApproval.unsupportedDecisionCount} 个结构化决策暂不由工作台展示，可转到 Codex 处理。</p>}
+              {execution.pendingApproval.responseSubmitted && <p className="execution-empty">审批决定已提交，正在等待 Codex 确认。</p>}
+              <div className="approval-actions">{execution.pendingApproval.availableDecisions.includes('cancel') && <button type="button" className="secondary-button danger-text" disabled={approvalBusy || execution.pendingApproval.responseSubmitted} onClick={() => void respondApproval('cancel')}>取消请求</button>}{execution.pendingApproval.availableDecisions.includes('decline') && <button type="button" className="secondary-button danger-text" disabled={approvalBusy || execution.pendingApproval.responseSubmitted} onClick={() => void respondApproval('decline')}>拒绝</button>}{execution.pendingApproval.availableDecisions.includes('acceptForSession') && <button type="button" className="secondary-button" disabled={approvalBusy || execution.pendingApproval.responseSubmitted} onClick={() => void respondApproval('acceptForSession')}>本次会话允许</button>}{execution.pendingApproval.availableDecisions.includes('accept') && <button type="button" className="primary-button" disabled={approvalBusy || execution.pendingApproval.responseSubmitted} onClick={() => void respondApproval('accept')}>{approvalBusy || execution.pendingApproval.responseSubmitted ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}{execution.pendingApproval.responseSubmitted ? '等待确认' : '批准一次'}</button>}</div>
+            </section>}
+
+            {execution?.pendingUserInput && <section className="approval-card user-input-card" aria-label="等待回答">
+              <div className="approval-card-title"><MessageSquareText size={16} /><div><strong>Codex 需要补充信息</strong><span>{execution.pendingUserInput.isBlocking ? '回答前执行将暂停' : '可补充信息以继续执行'}</span></div></div>
+              {execution.pendingUserInput.questions.map((question) => <label className="field" key={question.id}><span>{question.header || question.question}</span>{question.options.length && !question.isOther ? <select value={userInputAnswers[question.id] ?? ''} onChange={(event) => setUserInputAnswers((current) => ({ ...current, [question.id]: event.target.value }))}><option value="">请选择</option>{question.options.map((option) => <option key={option.label} value={option.label}>{option.label}{option.description ? ` — ${option.description}` : ''}</option>)}</select> : <><input type={question.isSecret ? 'password' : 'text'} list={question.options.length ? `request-options-${question.id}` : undefined} value={userInputAnswers[question.id] ?? ''} onChange={(event) => setUserInputAnswers((current) => ({ ...current, [question.id]: event.target.value }))} placeholder={question.question} />{question.options.length > 0 && <datalist id={`request-options-${question.id}`}>{question.options.map((option) => <option key={option.label} value={option.label}>{option.description}</option>)}</datalist>}</>}</label>)}
+              <div className="approval-actions"><button type="button" className="secondary-button danger-text" disabled={userInputBusy} onClick={() => void closeUserInput(true)}>取消</button><button type="button" className="primary-button" disabled={userInputBusy} onClick={() => void closeUserInput(false)}>{userInputBusy ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}提交回答</button></div>
             </section>}
 
             <section className="execution-section execution-plan">
@@ -1515,8 +1562,8 @@ function TaskPanel({ task, thread, execution, onClose, onTaskChange, onArchive, 
           <div className="execution-composer">
             {steerReady && <p className="steer-mode-note"><Activity size={11} />引导当前回合<span>补充内容会立即生效</span></p>}
             {attachmentTray()}
-            <textarea value={message} onChange={(event) => setMessage(event.target.value)} onPaste={(event) => void pasteComposerImages(event)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !composerDisabled && hasComposerInput) { event.preventDefault(); void sendMessage('execution'); } }} placeholder={execution?.status === 'waiting_approval' ? '请先处理审批，再继续引导' : steerReady ? '补充要求、粘贴截图或修正方向，发送后直接引导当前回合…' : reworkReady ? '补充返工要求或粘贴截图，发送后创建新的执行回合…' : execution?.status === 'completed' ? '继续追问、补充下一步要求或粘贴截图…' : '告诉 Codex 下一步要执行什么，支持直接粘贴截图…'} rows={2} disabled={composerDisabled} />
-            <div><span>{!conversationThreadId ? '请先创建或关联 Codex 会话' : taskLocked ? '终态任务已锁定' : execution?.status === 'waiting_approval' ? '请先处理审批' : steerReady ? '正在执行 · 本次发送会引导当前回合' : `${selectedModel?.displayName ?? 'Codex'} · ${selectedServiceTier?.name ?? '标准'} · ${(effortText[effort] ?? effort) || '默认'}`}</span><div className="composer-actions"><button type="button" className="attachment-button" aria-label="添加截图" title="添加截图（也可直接粘贴）" disabled={composerDisabled || attachments.length >= 4} onClick={() => void pickComposerImages()}><ImagePlus size={14} /></button><button type="button" className={`send-button ${steerReady ? 'steer-button' : ''}`} title={steerReady ? '引导当前回合（⌘ Enter）' : '开始执行（⌘ Enter）'} disabled={composerDisabled || !hasComposerInput} onClick={() => void sendMessage('execution')}>{sending ? <LoaderCircle className="spin" size={14} /> : steerReady ? <Send size={14} /> : <Play size={14} />}</button></div></div>
+            <textarea value={message} onChange={(event) => setMessage(event.target.value)} onPaste={(event) => void pasteComposerImages(event)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !composerDisabled && hasComposerInput) { event.preventDefault(); void sendMessage('execution'); } }} placeholder={execution?.status === 'waiting_approval' ? '请先处理审批，再继续引导' : execution?.status === 'waiting_input' ? '请先回答 Codex 的问题' : steerReady ? '补充要求、粘贴截图或修正方向，发送后直接引导当前回合…' : reworkReady ? '补充返工要求或粘贴截图，发送后创建新的执行回合…' : execution?.status === 'completed' ? '继续追问、补充下一步要求或粘贴截图…' : '告诉 Codex 下一步要执行什么，支持直接粘贴截图…'} rows={2} disabled={composerDisabled} />
+            <div><span>{!conversationThreadId ? '请先创建或关联 Codex 会话' : taskLocked ? '终态任务已锁定' : execution?.status === 'waiting_approval' ? '请先处理审批' : execution?.status === 'waiting_input' ? '请先回答 Codex 的问题' : steerReady ? '正在执行 · 本次发送会引导当前回合' : `${selectedModel?.displayName ?? 'Codex'} · ${selectedServiceTier?.name ?? '标准'} · ${(effortText[effort] ?? effort) || '默认'}`}</span><div className="composer-actions"><button type="button" className="attachment-button" aria-label="添加截图" title="添加截图（也可直接粘贴）" disabled={composerDisabled || attachments.length >= 4} onClick={() => void pickComposerImages()}><ImagePlus size={14} /></button><button type="button" className={`send-button ${steerReady ? 'steer-button' : ''}`} title={steerReady ? '引导当前回合（⌘ Enter）' : '开始执行（⌘ Enter）'} disabled={composerDisabled || !hasComposerInput} onClick={() => void sendMessage('execution')}>{sending ? <LoaderCircle className="spin" size={14} /> : steerReady ? <Send size={14} /> : <Play size={14} />}</button></div></div>
           </div>
         </div>
       ) : (
@@ -1529,7 +1576,7 @@ function TaskPanel({ task, thread, execution, onClose, onTaskChange, onArchive, 
             {loadingThread && <div className="column-empty"><LoaderCircle className="spin" size={18} />读取对话记录</div>}
             {!loadingThread && messages.map((item, index) => <div className={`message ${item.role}`} key={`${item.role}-${index}`}><div className="message-role">{item.role === 'user' ? <UserRound size={13} /> : <Bot size={13} />}{item.role === 'user' ? '你' : 'Codex'}</div><p>{item.text}</p></div>)}
             {pendingThreadMessages.map((item) => <div className={`message user pending-message ${item.kind === 'steer' ? 'steer-message' : ''}`} key={item.id}><div className="message-role"><UserRound size={13} />你 · {item.kind === 'steer' ? '已引导当前回合' : '已发送'}</div><p>{item.text}</p></div>)}
-            {executionBusy && <div className="message assistant thread-live-message"><div className="message-role"><LoaderCircle className="spin" size={13} />Codex · {execution?.status === 'waiting_approval' ? '等待审批' : '正在回复'}</div><div className="thread-live-bubble"><p>{execution?.status === 'waiting_approval' ? execution.pendingApproval?.reason || '需要你确认一项受保护操作。' : execution?.lastMessage || '正在处理你的消息…'}</p><button type="button" className="quiet-button" onClick={() => setTab('execution')}><Activity size={13} />{execution?.status === 'waiting_approval' ? '处理审批' : '查看执行'}</button></div></div>}
+            {executionBusy && <div className="message assistant thread-live-message"><div className="message-role"><LoaderCircle className="spin" size={13} />Codex · {execution?.status === 'waiting_approval' ? '等待审批' : execution?.status === 'waiting_input' ? '等待回答' : '正在回复'}</div><div className="thread-live-bubble"><p>{execution?.status === 'waiting_approval' ? execution.pendingApproval?.reason || '需要你确认一项受保护操作。' : execution?.status === 'waiting_input' ? execution.pendingUserInput?.questions[0]?.question || '需要你补充信息。' : execution?.lastMessage || '正在处理你的消息…'}</p><button type="button" className="quiet-button" onClick={() => setTab('execution')}><Activity size={13} />{execution?.status === 'waiting_approval' ? '处理审批' : execution?.status === 'waiting_input' ? '回答问题' : '查看执行'}</button></div></div>}
             {!loadingThread && conversationThreadId && effectiveThread && !messages.length && <div className="column-empty"><MessageSquareText size={18} /><strong>对话已关联</strong><span>可以在下方直接继续发送消息</span></div>}
             {!loadingThread && conversationThreadId && !effectiveThread && <div className="column-empty"><RefreshCw size={18} /><strong>对话目录待同步</strong><span>历史记录暂不可见，但不影响继续发送</span></div>}
             {!conversationThreadId && <div className="column-empty"><Link2 size={18} /><strong>未关联 Codex 对话</strong><span>编辑任务时选择一个本机对话</span></div>}
@@ -1544,8 +1591,8 @@ function TaskPanel({ task, thread, execution, onClose, onTaskChange, onArchive, 
             {permissionPreset === 'full-access' && <div className="permission-warning"><AlertTriangle size={13} /><span><strong>完全访问</strong> 将关闭审批和沙盒限制；发送前仍需你再次确认。</span></div>}
             {steerReady && <p className="steer-mode-note"><Activity size={11} />引导当前回合<span>补充内容会立即生效</span></p>}
             {attachmentTray()}
-            <textarea aria-label="直接回复关联对话" value={message} onChange={(event) => setMessage(event.target.value)} onPaste={(event) => void pasteComposerImages(event)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !composerDisabled && hasComposerInput) { event.preventDefault(); void sendMessage('thread'); } }} placeholder={execution?.status === 'waiting_approval' ? '请先处理审批，再继续引导' : steerReady ? '补充要求、粘贴截图或修正方向，发送后直接引导当前回合…' : taskLocked ? '终态任务已锁定' : '直接回复这段对话，支持粘贴截图…'} rows={3} disabled={composerDisabled} />
-            <div className="thread-composer-footer"><span>{execution?.status === 'waiting_approval' ? '请先处理审批' : steerReady ? '正在执行 · ⌘ Enter 引导当前回合' : `${selectedModel?.displayName ?? 'Codex'} · ⌘ Enter 发送`}</span><div className="composer-actions"><button type="button" className="attachment-button" aria-label="添加截图" title="添加截图（也可直接粘贴）" disabled={composerDisabled || attachments.length >= 4} onClick={() => void pickComposerImages()}><ImagePlus size={14} /></button><button type="button" className={`send-button ${steerReady ? 'steer-button' : ''}`} aria-label={steerReady ? '引导当前回合' : '发送消息'} title={steerReady ? '引导当前回合（⌘ Enter）' : '发送消息（⌘ Enter）'} disabled={composerDisabled || !hasComposerInput} onClick={() => void sendMessage('thread')}>{sending ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />}</button></div></div>
+            <textarea aria-label="直接回复关联对话" value={message} onChange={(event) => setMessage(event.target.value)} onPaste={(event) => void pasteComposerImages(event)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !composerDisabled && hasComposerInput) { event.preventDefault(); void sendMessage('thread'); } }} placeholder={execution?.status === 'waiting_approval' ? '请先处理审批，再继续引导' : execution?.status === 'waiting_input' ? '请先回答 Codex 的问题' : steerReady ? '补充要求、粘贴截图或修正方向，发送后直接引导当前回合…' : taskLocked ? '终态任务已锁定' : '直接回复这段对话，支持粘贴截图…'} rows={3} disabled={composerDisabled} />
+            <div className="thread-composer-footer"><span>{execution?.status === 'waiting_approval' ? '请先处理审批' : execution?.status === 'waiting_input' ? '请先回答 Codex 的问题' : steerReady ? '正在执行 · ⌘ Enter 引导当前回合' : `${selectedModel?.displayName ?? 'Codex'} · ⌘ Enter 发送`}</span><div className="composer-actions"><button type="button" className="attachment-button" aria-label="添加截图" title="添加截图（也可直接粘贴）" disabled={composerDisabled || attachments.length >= 4} onClick={() => void pickComposerImages()}><ImagePlus size={14} /></button><button type="button" className={`send-button ${steerReady ? 'steer-button' : ''}`} aria-label={steerReady ? '引导当前回合' : '发送消息'} title={steerReady ? '引导当前回合（⌘ Enter）' : '发送消息（⌘ Enter）'} disabled={composerDisabled || !hasComposerInput} onClick={() => void sendMessage('thread')}>{sending ? <LoaderCircle className="spin" size={14} /> : <Send size={14} />}</button></div></div>
           </div>}
         </div>
       )}

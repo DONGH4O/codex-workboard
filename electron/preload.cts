@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('codexTaskboard', {
   steerTurn: (input: unknown) => ipcRenderer.invoke('execution:steer', input),
   getExecution: (taskId: string) => ipcRenderer.invoke('execution:get', taskId),
   respondToApproval: (input: unknown) => ipcRenderer.invoke('execution:approval:respond', input),
+  respondToUserInput: (input: unknown) => ipcRenderer.invoke('execution:user-input:respond', input),
+  cancelUserInput: (input: unknown) => ipcRenderer.invoke('execution:user-input:cancel', input),
   onExecutionEvent: (callback: (payload: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload);
     ipcRenderer.on('execution:event', listener);

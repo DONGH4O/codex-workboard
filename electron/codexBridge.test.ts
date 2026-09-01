@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildThreadResumeParams, buildThreadStartParams, buildTurnInterruptParams, buildTurnStartParams, buildTurnSteerParams, codexExecutableCandidates, isThreadNotFoundError, isValidApprovalRequestId, resolveCodexExecutable } from './codexBridge.js';
+import { buildThreadResumeParams, buildThreadStartParams, buildTurnInterruptParams, buildTurnStartParams, buildTurnSteerParams, codexExecutableCandidates, isThreadNotFoundError, isValidApprovalRequestId, isValidRequestId, resolveCodexExecutable } from './codexBridge.js';
 
 describe('Codex turn permissions', () => {
   it('accepts zero as a valid JSON-RPC approval request id', () => {
@@ -7,6 +7,8 @@ describe('Codex turn permissions', () => {
     expect(isValidApprovalRequestId(1)).toBe(true);
     expect(isValidApprovalRequestId(-1)).toBe(false);
     expect(isValidApprovalRequestId(Number.NaN)).toBe(false);
+    expect(isValidRequestId('request-1')).toBe(true);
+    expect(isValidRequestId('')).toBe(false);
   });
 
   it('maps full access to no approvals and dangerFullAccess sandbox', () => {
@@ -30,8 +32,9 @@ describe('Codex turn permissions', () => {
       permissionPreset: 'on-request',
     })).toMatchObject({
       approvalPolicy: 'on-request',
-      sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/tmp/project'], networkAccess: true },
+      sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/tmp/project'], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false },
     });
+    expect(() => buildTurnStartParams({ threadId: 'thread-1', text: 'continue', cwd: 'relative/project' })).toThrow('绝对路径');
   });
 
   it('passes real service tiers to new threads and turns', () => {
@@ -78,9 +81,11 @@ describe('Codex turn permissions', () => {
   });
 
   it('discovers Codex without relying on a login shell PATH', () => {
-    const candidates = codexExecutableCandidates({ explicitPath: '/custom/codex', pathValue: '/first/bin:/second/bin', home: '/tmp/tester' });
-    expect(candidates.slice(0, 3)).toEqual(['/custom/codex', '/first/bin/codex', '/second/bin/codex']);
+    const candidates = codexExecutableCandidates({ platform: 'linux', explicitPath: '/custom/codex', pathValue: '/first/bin:/second/bin', home: '/tmp/tester' });
+    expect(candidates.slice(0, 3)).toEqual(['/custom/codex', '/Applications/ChatGPT.app/Contents/Resources/codex', '/Applications/Codex.app/Contents/Resources/codex']);
+    expect(candidates).toContain('/first/bin/codex');
+    expect(candidates).toContain('/second/bin/codex');
     expect(candidates).toContain('/Applications/ChatGPT.app/Contents/Resources/codex');
-    expect(resolveCodexExecutable({ explicitPath: process.execPath, pathValue: '', home: '/definitely/missing' })).toBe(process.execPath);
+    expect(resolveCodexExecutable({ platform: process.platform, explicitPath: process.execPath, pathValue: '', home: '/definitely/missing' })).toBe(process.execPath);
   });
 });

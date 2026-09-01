@@ -231,11 +231,36 @@ describe('TaskStore', () => {
         command: 'npm test',
         cwd: '/tmp/project',
         networkHost: '',
+        networkProtocol: '',
         availableDecisions: ['accept', 'decline'],
+        unsupportedDecisionCount: 0,
+        unsupportedDecisions: [],
+        responseSubmitted: false,
       },
     });
     expect(db.expireLiveExecutions()).toBe(1);
     expect(db.getExecutionSnapshot(task.id)).toMatchObject({ status: 'interrupted', output: '保留的终端输出', pendingApproval: null });
+    db.close();
+  });
+
+  it('persists string-id user input requests and clears them after restart', () => {
+    const db = store();
+    const task = db.create({ title: '等待回答', lane: 'execution', threadId: 'thread-input' });
+    db.saveExecutionSnapshot({
+      ...emptyExecutionSnapshot({ taskId: task.id, threadId: 'thread-input', turnId: 'turn-input' }),
+      status: 'waiting_input',
+      pendingUserInput: {
+        requestId: 'request-input',
+        threadId: 'thread-input',
+        turnId: 'turn-input',
+        itemId: 'item-input',
+        isBlocking: true,
+        questions: [{ id: 'q', header: '选择', question: '选择方案', isOther: false, isSecret: false, options: [] }],
+      },
+    });
+    expect(db.getExecutionSnapshot(task.id)?.pendingUserInput?.requestId).toBe('request-input');
+    expect(db.expireLiveExecutions()).toBe(1);
+    expect(db.getExecutionSnapshot(task.id)).toMatchObject({ status: 'interrupted', pendingUserInput: null });
     db.close();
   });
 

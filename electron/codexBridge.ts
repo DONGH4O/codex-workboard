@@ -1,14 +1,22 @@
 import { execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { accessSync, constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import {
+  SUPPORTED_CODEX_VERSION,
+  codexDriverCandidates,
+  codexDriverEnvironment,
+  isSupportedCodexVersion,
+  resolveCodexDriver,
+  type CodexDriverResolution,
+  type CodexDriverSource,
+} from './codexDriver.js';
 
-type RpcId = number;
+type RpcId = string | number;
 type RpcResponse = { id: RpcId; result?: unknown; error?: { code?: number; message?: string; data?: unknown } };
 type ServerNotification = { method?: string; params?: Record<string, unknown> };
-export type CodexBridgeEvent = { method: string; params: Record<string, unknown>; requestId?: number };
+export type CodexBridgeEvent = { method: string; params: Record<string, unknown>; requestId?: RpcId };
 
 export interface CodexModelOption {
   id: string;
@@ -25,38 +33,20 @@ export interface CodexModelOption {
 export type ExecutionPermissionPreset = 'on-request' | 'untrusted' | 'full-access';
 export interface TurnImageInput { path: string; detail?: 'auto' | 'low' | 'high' | 'original' }
 
-export function codexExecutableCandidates(input: { explicitPath?: string; pathValue?: string; home?: string } = {}): string[] {
-  const home = input.home ?? homedir();
-  const fromPath = (input.pathValue ?? process.env.PATH ?? '')
-    .split(path.delimiter)
-    .filter(Boolean)
-    .map((directory) => path.join(directory, 'codex'));
-  return Array.from(new Set([
-    input.explicitPath ?? process.env.CODEX_CLI_PATH ?? '',
-    ...fromPath,
-    '/Applications/ChatGPT.app/Contents/Resources/codex',
-    '/Applications/Codex.app/Contents/Resources/codex',
-    '/opt/homebrew/bin/codex',
-    '/usr/local/bin/codex',
-    path.join(home, '.local/bin/codex'),
-    path.join(home, '.npm-global/bin/codex'),
-  ].filter(Boolean)));
+export function codexExecutableCandidates(input: { explicitPath?: string; pathValue?: string; home?: string; platform?: NodeJS.Platform; pathDelimiter?: string } = {}): string[] {
+  return codexDriverCandidates(input).map((candidate) => candidate.executablePath);
 }
 
-export function resolveCodexExecutable(input: { explicitPath?: string; pathValue?: string; home?: string } = {}): string {
-  for (const candidate of codexExecutableCandidates(input)) {
-    try {
-      accessSync(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch {
-      // Try the next stable installation location.
-    }
-  }
-  throw new Error('未找到 Codex CLI。请确认 ChatGPT/Codex 已安装，或通过 CODEX_CLI_PATH 指定 codex 可执行文件。');
+export function resolveCodexExecutable(input: { explicitPath?: string; pathValue?: string; home?: string; platform?: NodeJS.Platform; pathDelimiter?: string } = {}): string {
+  return resolveCodexDriver(input).executablePath;
 }
 
 export function isValidApprovalRequestId(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
+}
+
+export function isValidRequestId(value: RpcId): boolean {
+  return typeof value === 'string' ? value.length > 0 : isValidApprovalRequestId(value);
 }
 export interface TurnStartInput {
   threadId: string;
@@ -100,6 +90,7 @@ export function buildTurnSteerParams(input: TurnSteerInput): Record<string, unkn
 export function buildTurnStartParams(input: TurnStartInput): Record<string, unknown> {
   const permissionPreset = input.permissionPreset ?? 'untrusted';
   const fullAccess = permissionPreset === 'full-access';
+  if (input.cwd && !path.isAbsolute(input.cwd)) throw new Error('Codex 工作目录必须是已获准的绝对路径');
   return {
     threadId: input.threadId,
     input: buildUserInputs(input.text, input.images),
@@ -109,7 +100,13 @@ export function buildTurnStartParams(input: TurnStartInput): Record<string, unkn
     approvalPolicy: fullAccess ? 'never' : permissionPreset,
     sandboxPolicy: fullAccess
       ? { type: 'dangerFullAccess' }
-      : { type: 'workspaceWrite', ...(input.cwd ? { writableRoots: [input.cwd] } : {}), networkAccess: true },
+      : {
+          type: 'workspaceWrite',
+          writableRoots: input.cwd ? [input.cwd] : [],
+          networkAccess: true,
+          excludeTmpdirEnvVar: false,
+          excludeSlashTmp: false,
+        },
     ...(input.cwd ? { cwd: input.cwd } : {}),
   };
 }
@@ -163,85 +160,235 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
+export type CodexConnectionState = 'idle' | 'starting' | 'ready' | 'version_incompatible' | 'auth_required' | 'protocol_incompatible' | 'error';
+
+export interface CodexBridgeStatus {
+  connected: boolean;
+  state: CodexConnectionState;
+  version: string;
+  expectedVersion: string;
+  source?: CodexDriverSource;
+  executablePath?: string;
+  codexHome?: string;
+  platformFamily?: string;
+  platformOs?: string;
+  accountChecked: boolean;
+  modelListChecked: boolean;
+  windowsSandbox?: { state: 'unknown' | 'ready' | 'needs_setup' | 'unavailable'; detail?: string };
+  error?: string;
+}
+
+interface PendingServerRequest {
+  method: string;
+  threadId: string;
+  turnId: string;
+  timer?: NodeJS.Timeout;
+  responded?: boolean;
+}
+
+export interface UserInputAnswers {
+  [questionId: string]: { answers: string[] };
+}
+
+class CodexBridgeStartError extends Error {
+  constructor(readonly state: CodexConnectionState, message: string) {
+    super(message);
+  }
+}
+
 export class CodexBridge {
   private process: ChildProcessWithoutNullStreams | null = null;
   private nextId = 1;
   private pending = new Map<RpcId, PendingRequest>();
+  private pendingServerRequests = new Map<RpcId, PendingServerRequest>();
   private starting: Promise<void> | null = null;
   private lastError = '';
   private completedTurns = new Map<string, Record<string, unknown>>();
   private turnWaiters = new Map<string, { resolve(value: Record<string, unknown>): void; reject(reason: Error): void; timer: NodeJS.Timeout }>();
   private eventListeners = new Set<(event: CodexBridgeEvent) => void>();
-  private executablePath: string | null = null;
+  private driver: CodexDriverResolution | null = null;
+  private connectionState: CodexConnectionState = 'idle';
+  private platformFamily = '';
+  private platformOs = '';
+  private accountChecked = false;
+  private modelListChecked = false;
+  private windowsSandbox: CodexBridgeStatus['windowsSandbox'] = { state: 'unknown' };
+  private expectedExits = new WeakSet<ChildProcessWithoutNullStreams>();
   version = 'unknown';
 
   constructor(private readonly runtime: {
+    resolveDriver?: () => CodexDriverResolution;
     resolveExecutable?: () => string;
-    readVersion?: (executablePath: string) => string;
+    readVersion?: (executablePath: string, env: NodeJS.ProcessEnv) => string;
+    spawnAppServer?: (executablePath: string, env: NodeJS.ProcessEnv) => ChildProcessWithoutNullStreams;
+    requestTimeoutMs?: number;
+    serverRequestTimeoutMs?: number;
+    processExitTimeoutMs?: number;
   } = {}) {}
 
-  private codexPath(): string {
-    if (!this.executablePath) this.executablePath = this.runtime.resolveExecutable?.() ?? resolveCodexExecutable();
-    return this.executablePath;
+  private resolveDriver(): CodexDriverResolution {
+    if (!this.driver) {
+      this.driver = this.runtime.resolveDriver?.()
+        ?? (this.runtime.resolveExecutable
+          ? { executablePath: this.runtime.resolveExecutable(), source: 'explicit', codexHome: process.env.CODEX_HOME || path.join(homedir(), '.codex') }
+          : resolveCodexDriver({ explicitPath: process.env.CODEX_CLI_PATH }));
+    }
+    return this.driver;
   }
 
   async start(): Promise<void> {
-    if (this.process) return;
+    if (this.process && this.connectionState === 'ready') return;
+    if (this.process) throw new Error('上一次 Codex App Server 未确认退出，已阻止启动新进程');
     if (this.starting) return this.starting;
 
     this.starting = (async () => {
-      const executablePath = this.codexPath();
-      try {
-        this.version = this.runtime.readVersion?.(executablePath)
-          ?? execFileSync(executablePath, ['--version'], { encoding: 'utf8' }).trim();
-      } catch {
-        this.version = 'unknown';
-      }
-      const child = spawn(executablePath, ['app-server', '--listen', 'stdio://'], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env },
-      });
-      this.process = child;
-
-      child.once('exit', (code, signal) => {
-        const message = `Codex App Server 已退出 (${code ?? signal ?? 'unknown'})`;
-        this.lastError = message;
-        this.process = null;
-        for (const request of this.pending.values()) {
-          clearTimeout(request.timer);
-          request.reject(new Error(message));
-        }
-        this.pending.clear();
-        for (const waiter of this.turnWaiters.values()) {
-          clearTimeout(waiter.timer);
-          waiter.reject(new Error(message));
-        }
-        this.turnWaiters.clear();
-      });
-
-      child.stderr.on('data', (chunk: Buffer) => {
-        const text = chunk.toString('utf8').trim();
-        if (text) this.lastError = text.slice(-600);
-      });
-
-      const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-      lines.on('line', (line) => this.onLine(line));
-
-      await this.request('initialize', {
-        clientInfo: {
-          name: 'codex-workboard',
-          title: 'Codex Workboard',
-          version: '1.0.0',
-        },
-        capabilities: { experimentalApi: true },
-      });
-      this.notify('initialized', {});
+      this.connectionState = 'starting';
       this.lastError = '';
+      this.accountChecked = false;
+      this.modelListChecked = false;
+      let child: ChildProcessWithoutNullStreams | null = null;
+      try {
+        const driver = this.resolveDriver();
+        const env = codexDriverEnvironment(driver.codexHome);
+        this.version = this.runtime.readVersion?.(driver.executablePath, env)
+          ?? execFileSync(driver.executablePath, ['--version'], { encoding: 'utf8', env }).trim();
+        if (!isSupportedCodexVersion(this.version)) {
+          throw new CodexBridgeStartError('version_incompatible', `Codex 驱动版本不兼容：当前 ${this.version || 'unknown'}，要求 ${SUPPORTED_CODEX_VERSION}`);
+        }
+        child = this.runtime.spawnAppServer?.(driver.executablePath, env) ?? spawn(driver.executablePath, ['app-server', '--listen', 'stdio://'], {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env,
+        });
+        this.process = child;
+        this.attachProcess(child);
+
+        const initialized = await this.request('initialize', {
+          clientInfo: {
+            name: 'codex-workboard',
+            title: 'Codex Workboard',
+            version: '1.0.0',
+          },
+          capabilities: { experimentalApi: true, requestAttestation: false },
+        }) as Record<string, unknown>;
+        if (typeof initialized.platformFamily !== 'string' || typeof initialized.platformOs !== 'string' || typeof initialized.codexHome !== 'string') {
+          throw new CodexBridgeStartError('protocol_incompatible', 'Codex initialize 响应缺少平台或 CODEX_HOME 字段');
+        }
+        const expectedHome = path.resolve(driver.codexHome);
+        const actualHome = path.resolve(initialized.codexHome);
+        if ((process.platform === 'win32' ? actualHome.toLocaleLowerCase() : actualHome) !== (process.platform === 'win32' ? expectedHome.toLocaleLowerCase() : expectedHome)) {
+          throw new CodexBridgeStartError('protocol_incompatible', `Codex App Server 使用了不同的 CODEX_HOME：${actualHome}`);
+        }
+        this.platformFamily = initialized.platformFamily;
+        this.platformOs = initialized.platformOs;
+        this.notify('initialized', {});
+
+        const account = await this.request('account/read', { refreshToken: false }) as Record<string, unknown>;
+        if (typeof account.requiresOpenaiAuth !== 'boolean') {
+          throw new CodexBridgeStartError('protocol_incompatible', 'Codex account/read 响应缺少 requiresOpenaiAuth');
+        }
+        this.accountChecked = true;
+        if (account.requiresOpenaiAuth && !account.account) {
+          throw new CodexBridgeStartError('auth_required', 'Codex 需要登录；W2 不执行登录，也不会创建会话或任务');
+        }
+
+        const models = await this.request('model/list', { cursor: null, limit: 200, includeHidden: false }) as Record<string, unknown>;
+        if (!Array.isArray(models.data) || !('nextCursor' in models)) {
+          throw new CodexBridgeStartError('protocol_incompatible', 'Codex model/list 响应结构与固定协议不一致');
+        }
+        this.modelListChecked = true;
+        if (this.platformOs === 'windows') {
+          const sandbox = await this.request('windowsSandbox/readiness', {}) as Record<string, unknown>;
+          this.windowsSandbox = sandbox.status === 'ready'
+            ? { state: 'ready' }
+            : sandbox.status === 'notConfigured' || sandbox.status === 'updateRequired'
+              ? { state: 'needs_setup', detail: String(sandbox.status) }
+              : { state: 'unavailable', detail: '返回了未知状态' };
+        }
+        this.connectionState = 'ready';
+        this.lastError = '';
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        this.connectionState = error instanceof CodexBridgeStartError
+          ? error.state
+          : !child || this.process === null ? 'error' : 'protocol_incompatible';
+        this.lastError = failure.message;
+        if (child && this.process === child) {
+          try {
+            await this.terminateProcess(child, this.runtime.processExitTimeoutMs ?? 2_000);
+          } catch (cleanupError) {
+            this.connectionState = 'error';
+            this.lastError = `${failure.message}；${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`;
+            throw new Error(this.lastError);
+          }
+        }
+        throw failure;
+      }
     })().finally(() => {
       this.starting = null;
     });
 
     return this.starting;
+  }
+
+  private attachProcess(child: ChildProcessWithoutNullStreams): void {
+    child.once('error', (error) => this.handleProcessExit(child, `Codex App Server 启动失败：${error.message}`));
+    child.once('exit', (code, signal) => {
+      if (this.expectedExits.has(child)) {
+        if (this.process === child) this.process = null;
+        return;
+      }
+      this.handleProcessExit(child, `Codex App Server 已退出 (${code ?? signal ?? 'unknown'})`);
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      const text = chunk.toString('utf8').trim();
+      if (text) this.lastError = text.slice(-600);
+    });
+    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+    lines.on('line', (line) => this.onLine(line));
+  }
+
+  private handleProcessExit(child: ChildProcessWithoutNullStreams, message: string): void {
+    if (this.process !== child) return;
+    this.lastError = message;
+    this.connectionState = 'error';
+    this.process = null;
+    this.rejectInflight(message);
+  }
+
+  private rejectInflight(message: string): void {
+    for (const request of this.pending.values()) {
+      clearTimeout(request.timer);
+      request.reject(new Error(message));
+    }
+    this.pending.clear();
+    for (const request of this.pendingServerRequests.values()) if (request.timer) clearTimeout(request.timer);
+    this.pendingServerRequests.clear();
+    for (const waiter of this.turnWaiters.values()) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error(message));
+    }
+    this.turnWaiters.clear();
+  }
+
+  private async terminateProcess(child: ChildProcessWithoutNullStreams, timeoutMs = 2_000): Promise<void> {
+    this.expectedExits.add(child);
+    this.rejectInflight(this.lastError || 'Codex App Server 已停止');
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error('Codex App Server 在终止超时后仍未确认退出'));
+      }, timeoutMs);
+      child.once('exit', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      });
+      child.kill('SIGTERM');
+    });
+    if (this.process === child) this.process = null;
   }
 
   private onLine(line: string): void {
@@ -255,10 +402,13 @@ export class CodexBridge {
       const event: CodexBridgeEvent = {
         method: message.method,
         params: message.params ?? {},
-        ...(typeof message.id === 'number' ? { requestId: message.id } : {}),
+        ...(typeof message.id === 'number' || typeof message.id === 'string' ? { requestId: message.id } : {}),
       };
-      for (const listener of this.eventListeners) listener(event);
-      if (typeof message.id === 'number' && !this.pending.has(message.id)) return;
+      this.emitEvent(event);
+      if ((typeof message.id === 'number' || typeof message.id === 'string') && !this.pending.has(message.id)) {
+        this.handleServerRequest(message.id, message.method, message.params ?? {});
+        return;
+      }
     }
     if (message.method === 'turn/completed' && message.params) {
       const threadId = String(message.params.threadId ?? '');
@@ -266,6 +416,7 @@ export class CodexBridge {
       const turnId = turn && typeof turn.id === 'string' ? turn.id : '';
       const key = `${threadId}:${turnId}`;
       if (threadId && turnId && turn) {
+        this.closeRequestsForTurn(threadId, turnId, 'turn-completed');
         const waiter = this.turnWaiters.get(key);
         if (waiter) {
           clearTimeout(waiter.timer);
@@ -276,7 +427,15 @@ export class CodexBridge {
         }
       }
     }
-    if (typeof message.id !== 'number') return;
+    if (message.method === 'serverRequest/resolved' && message.params) {
+      const requestId = message.params.requestId;
+      if (typeof requestId === 'string' || typeof requestId === 'number') {
+        const request = this.pendingServerRequests.get(requestId);
+        if (request?.timer) clearTimeout(request.timer);
+        this.pendingServerRequests.delete(requestId);
+      }
+    }
+    if (typeof message.id !== 'number' && typeof message.id !== 'string') return;
     const pending = this.pending.get(message.id);
     if (!pending) return;
     clearTimeout(pending.timer);
@@ -285,6 +444,67 @@ export class CodexBridge {
       pending.reject(new Error(message.error.message || 'Codex App Server 请求失败'));
     } else {
       pending.resolve(message.result);
+    }
+  }
+
+  private emitEvent(event: CodexBridgeEvent): void {
+    for (const listener of this.eventListeners) listener(event);
+  }
+
+  private handleServerRequest(requestId: RpcId, method: string, params: Record<string, unknown>): void {
+    const approvalMethods = new Set([
+      'item/commandExecution/requestApproval',
+      'item/fileChange/requestApproval',
+      'applyPatchApproval',
+      'execCommandApproval',
+    ]);
+    if (approvalMethods.has(method)) {
+      this.pendingServerRequests.set(requestId, {
+        method,
+        threadId: typeof params.threadId === 'string' ? params.threadId : '',
+        turnId: typeof params.turnId === 'string' ? params.turnId : '',
+      });
+      return;
+    }
+    if (method === 'item/tool/requestUserInput') {
+      const timeoutMs = typeof params.autoResolutionMs === 'number' && params.autoResolutionMs > 0
+        ? params.autoResolutionMs
+        : this.runtime.serverRequestTimeoutMs ?? 300_000;
+      const pending: PendingServerRequest = {
+        method,
+        threadId: typeof params.threadId === 'string' ? params.threadId : '',
+        turnId: typeof params.turnId === 'string' ? params.turnId : '',
+      };
+      pending.timer = setTimeout(() => {
+        if (!this.pendingServerRequests.delete(requestId)) return;
+        this.write({ id: requestId, result: { answers: {} } });
+        this.emitEvent({ method: 'workboard/serverRequestClosed', requestId, params: { requestId, reason: 'timeout' } });
+      }, timeoutMs);
+      this.pendingServerRequests.set(requestId, pending);
+      return;
+    }
+    this.write({ id: requestId, error: { code: -32601, message: `Codex Workboard 不支持服务端请求：${method}` } });
+    this.emitEvent({
+      method: 'workboard/serverRequestUnsupported',
+      requestId,
+      params: { requestId, method, threadId: params.threadId ?? '', turnId: params.turnId ?? '' },
+    });
+  }
+
+  private closeServerRequest(requestId: RpcId): PendingServerRequest {
+    const request = this.pendingServerRequests.get(requestId);
+    if (!request) throw new Error('服务端请求已失效');
+    if (request.timer) clearTimeout(request.timer);
+    this.pendingServerRequests.delete(requestId);
+    return request;
+  }
+
+  private closeRequestsForTurn(threadId: string, turnId: string, reason: string): void {
+    for (const [requestId, request] of this.pendingServerRequests) {
+      if (request.threadId !== threadId || request.turnId !== turnId) continue;
+      if (request.timer) clearTimeout(request.timer);
+      this.pendingServerRequests.delete(requestId);
+      this.emitEvent({ method: 'workboard/serverRequestClosed', requestId, params: { requestId, reason, threadId, turnId } });
     }
   }
 
@@ -303,7 +523,7 @@ export class CodexBridge {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`${method} 请求超时`));
-      }, timeoutMs);
+      }, this.runtime.requestTimeoutMs ?? timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.write({ method, id, params });
     });
@@ -356,8 +576,18 @@ export class CodexBridge {
 
   async listModels(): Promise<CodexModelOption[]> {
     await this.start();
-    const response = await this.request('model/list', { includeHidden: false }) as { data?: CodexModelOption[] };
-    return (response.data ?? [])
+    const models: CodexModelOption[] = [];
+    let cursor: string | null = null;
+    const seenCursors = new Set<string>();
+    do {
+      const response = await this.request('model/list', { cursor, limit: 200, includeHidden: false }) as { data?: CodexModelOption[]; nextCursor?: string | null };
+      models.push(...(response.data ?? []));
+      const nextCursor = response.nextCursor ?? null;
+      if (nextCursor && seenCursors.has(nextCursor)) throw new Error('model/list 返回了重复游标');
+      if (nextCursor) seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    } while (cursor);
+    return models
       .filter((model) => model && typeof model.id === 'string')
       .map((model) => ({
         ...model,
@@ -405,6 +635,7 @@ export class CodexBridge {
   async interruptTurn(threadId: string, turnId: string): Promise<void> {
     await this.start();
     await this.request('turn/interrupt', buildTurnInterruptParams(threadId, turnId), 30_000);
+    this.closeRequestsForTurn(threadId, turnId, 'turn-interrupted');
   }
 
   async unsubscribeThread(threadId: string): Promise<'notLoaded' | 'notSubscribed' | 'unsubscribed'> {
@@ -413,9 +644,34 @@ export class CodexBridge {
     return response.status ?? 'notSubscribed';
   }
 
-  respondToApproval(requestId: number, decision: 'accept' | 'acceptForSession' | 'decline' | 'cancel'): void {
-    if (!isValidApprovalRequestId(requestId)) throw new Error('无效的审批请求');
+  respondToApproval(requestId: RpcId, decision: 'accept' | 'acceptForSession' | 'decline' | 'cancel'): void {
+    if (!isValidRequestId(requestId)) throw new Error('无效的审批请求');
+    const request = this.pendingServerRequests.get(requestId);
+    if (!request?.method.includes('Approval') && request?.method !== 'applyPatchApproval' && request?.method !== 'execCommandApproval') throw new Error('审批请求已失效');
+    if (request.responded) throw new Error('审批决定已提交，正在等待 Codex 确认');
     this.write({ id: requestId, result: { decision } });
+    request.responded = true;
+    this.emitEvent({ method: 'workboard/serverRequestResponseSubmitted', requestId, params: { requestId, method: request.method } });
+  }
+
+  respondToUserInput(requestId: RpcId, answers: UserInputAnswers): void {
+    if (!isValidRequestId(requestId)) throw new Error('无效的用户输入请求');
+    const request = this.pendingServerRequests.get(requestId);
+    if (request?.method !== 'item/tool/requestUserInput') throw new Error('用户输入请求已失效');
+    const normalized = Object.fromEntries(Object.entries(answers).map(([questionId, answer]) => [
+      questionId,
+      { answers: Array.isArray(answer.answers) ? answer.answers.map(String).filter(Boolean) : [] },
+    ]));
+    this.write({ id: requestId, result: { answers: normalized } });
+    this.closeServerRequest(requestId);
+    this.emitEvent({ method: 'workboard/serverRequestClosed', requestId, params: { requestId, reason: 'answered' } });
+  }
+
+  cancelUserInput(requestId: RpcId): void {
+    if (!isValidRequestId(requestId)) throw new Error('无效的用户输入请求');
+    this.write({ id: requestId, result: { answers: {} } });
+    this.closeServerRequest(requestId);
+    this.emitEvent({ method: 'workboard/serverRequestClosed', requestId, params: { requestId, reason: 'cancelled' } });
   }
 
   private waitForTurn(threadId: string, turnId: string, timeoutMs = 180_000): Promise<Record<string, unknown>> {
@@ -478,16 +734,36 @@ export class CodexBridge {
     return { decision, note: parsed.note.trim().slice(0, 3000), reviewThreadId };
   }
 
-  status(): { connected: boolean; version: string; error?: string } {
+  status(): CodexBridgeStatus {
     return {
-      connected: Boolean(this.process),
+      connected: Boolean(this.process) && this.connectionState === 'ready',
+      state: this.connectionState,
       version: this.version,
+      expectedVersion: SUPPORTED_CODEX_VERSION,
+      ...(this.driver ? {
+        source: this.driver.source,
+        executablePath: this.driver.executablePath,
+        codexHome: this.driver.codexHome,
+      } : {}),
+      ...(this.platformFamily ? { platformFamily: this.platformFamily } : {}),
+      ...(this.platformOs ? { platformOs: this.platformOs } : {}),
+      accountChecked: this.accountChecked,
+      modelListChecked: this.modelListChecked,
+      windowsSandbox: this.windowsSandbox,
       ...(this.lastError ? { error: this.lastError } : {}),
     };
   }
 
-  stop(): void {
-    this.process?.kill('SIGTERM');
-    this.process = null;
+  async stop(timeoutMs = 2_000): Promise<void> {
+    const child = this.process;
+    if (!child) return;
+    try {
+      await this.terminateProcess(child, timeoutMs);
+      this.connectionState = 'idle';
+    } catch (error) {
+      this.connectionState = 'error';
+      this.lastError = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
   }
 }

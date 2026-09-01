@@ -201,9 +201,11 @@ h1 { font-size: 23px; letter-spacing: -.025em; margin: 0; line-height: 1.15; }
 .execution-state i, .panel-live-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--line-strong); }
 .execution-state.is-live i, .panel-live-dot.execution-running { background: var(--execution); box-shadow: 0 0 0 3px color-mix(in oklch, var(--execution), transparent 82%); animation: live-pulse 1.5s ease-in-out infinite; }
 .execution-state.execution-waiting_approval i { background: var(--danger); box-shadow: 0 0 0 3px color-mix(in oklch, var(--danger), transparent 82%); }
+.execution-state.execution-waiting_input i { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent), transparent 82%); }
 .execution-state.execution-completed i { background: var(--review); }
 .execution-state.execution-failed i, .execution-state.execution-interrupted i { background: var(--danger); }
 .panel-live-dot.execution-waiting_approval { background: var(--danger); box-shadow: 0 0 0 3px color-mix(in oklch, var(--danger), transparent 82%); animation: live-pulse 1.5s ease-in-out infinite; }
+.panel-live-dot.execution-waiting_input { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent), transparent 82%); animation: live-pulse 1.5s ease-in-out infinite; }
 .panel-live-dot.execution-completed { background: var(--review); }
 .panel-live-dot.execution-failed, .panel-live-dot.execution-interrupted { background: var(--danger); }
 @keyframes live-pulse { 50% { opacity: .45; transform: scale(.78); } }
@@ -401,6 +403,7 @@ h1 { font-size: 23px; letter-spacing: -.025em; margin: 0; line-height: 1.15; }
 .execution-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); }
 .execution-status.execution-running i { background: var(--execution); box-shadow: 0 0 0 4px color-mix(in oklch, var(--execution), transparent 82%); animation: live-pulse 1.5s ease-in-out infinite; }
 .execution-status.execution-waiting_approval i { background: var(--danger); box-shadow: 0 0 0 4px color-mix(in oklch, var(--danger), transparent 82%); animation: live-pulse 1.5s ease-in-out infinite; }
+.execution-status.execution-waiting_input i { background: var(--accent); box-shadow: 0 0 0 4px color-mix(in oklch, var(--accent), transparent 82%); animation: live-pulse 1.5s ease-in-out infinite; }
 .execution-status.execution-completed i { background: var(--review); }
 .execution-status.execution-failed i, .execution-status.execution-interrupted i { background: var(--danger); }
 .execution-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 7px; }

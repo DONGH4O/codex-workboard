@@ -1,7 +1,8 @@
 export type Lane = 'plan' | 'execution' | 'review';
 export type Substatus = 'idea' | 'ready' | 'claimed' | 'running' | 'blocked' | 'pending_review' | 'rework' | 'accepted' | 'closed';
 export type Priority = 'low' | 'medium' | 'high';
-export type ExecutionStatus = 'idle' | 'running' | 'waiting_approval' | 'completed' | 'failed' | 'interrupted';
+export type RequestId = string | number;
+export type ExecutionStatus = 'idle' | 'running' | 'waiting_approval' | 'waiting_input' | 'completed' | 'failed' | 'interrupted';
 export type ApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel';
 export type ExecutionPermissionPreset = 'untrusted' | 'on-request' | 'full-access';
 
@@ -78,7 +79,7 @@ export interface ExecutionPlanStep {
 }
 
 export interface PendingApproval {
-  requestId: number;
+  requestId: RequestId;
   method: string;
   threadId: string;
   turnId: string;
@@ -87,7 +88,27 @@ export interface PendingApproval {
   command: string;
   cwd: string;
   networkHost: string;
+  networkProtocol: string;
   availableDecisions: ApprovalDecision[];
+  unsupportedDecisionCount: number;
+  unsupportedDecisions: Array<Record<string, unknown>>;
+  responseSubmitted: boolean;
+}
+
+export interface PendingUserInput {
+  requestId: RequestId;
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  isBlocking: boolean;
+  questions: Array<{
+    id: string;
+    header: string;
+    question: string;
+    isOther: boolean;
+    isSecret: boolean;
+    options: Array<{ label: string; description: string }>;
+  }>;
 }
 
 export interface ExecutionSnapshot {
@@ -108,6 +129,7 @@ export interface ExecutionSnapshot {
   diff: string;
   currentItem: Record<string, unknown> | null;
   pendingApproval: PendingApproval | null;
+  pendingUserInput: PendingUserInput | null;
   error: string;
 }
 
@@ -132,7 +154,21 @@ export interface BootstrapData {
     migratedTaskCount: number;
     archivedTaskCount: number;
   };
-  codex: { connected: boolean; version: string; error?: string };
+  codex: {
+    connected: boolean;
+    state: 'idle' | 'starting' | 'ready' | 'version_incompatible' | 'auth_required' | 'protocol_incompatible' | 'error';
+    version: string;
+    expectedVersion: string;
+    source?: 'explicit' | 'desktopApp' | 'systemPath' | 'bundled';
+    executablePath?: string;
+    codexHome?: string;
+    platformFamily?: string;
+    platformOs?: string;
+    accountChecked: boolean;
+    modelListChecked: boolean;
+    windowsSandbox?: { state: 'unknown' | 'ready' | 'needs_setup' | 'unavailable'; detail?: string };
+    error?: string;
+  };
 }
 
 export interface CreateTaskInput {
@@ -179,7 +215,9 @@ export interface DesktopApi {
   sendToThread(input: { taskId: string; threadId: string; text: string; images?: Array<{ path: string }>; model?: string; effort?: string; serviceTier?: string | null; permissionPreset?: ExecutionPermissionPreset }): Promise<{ turn: Record<string, unknown>; snapshot: ExecutionSnapshot; task: Task; conversationRecovered?: boolean }>;
   steerTurn(input: { taskId: string; threadId: string; turnId: string; text: string; images?: Array<{ path: string }> }): Promise<{ result: { turnId: string }; snapshot: ExecutionSnapshot; task: Task }>;
   getExecution(taskId: string): Promise<ExecutionSnapshot | null>;
-  respondToApproval(input: { taskId: string; requestId: number; decision: ApprovalDecision }): Promise<ExecutionSnapshot>;
+  respondToApproval(input: { taskId: string; requestId: RequestId; decision: ApprovalDecision }): Promise<ExecutionSnapshot>;
+  respondToUserInput(input: { taskId: string; requestId: RequestId; answers: Record<string, { answers: string[] }> }): Promise<ExecutionSnapshot>;
+  cancelUserInput(input: { taskId: string; requestId: RequestId }): Promise<ExecutionSnapshot>;
   onExecutionEvent(callback: (payload: { snapshot: ExecutionSnapshot; task: Task }) => void): () => void;
   openThreadInCodex(threadId: string): Promise<void>;
   handoffToCodex(input: { taskId: string; threadId: string }): Promise<{ task: Task; interrupted: boolean }>;
