@@ -95,11 +95,20 @@ export interface BulkTaskResult {
 type Row = Record<string, string | number | null>;
 
 export class TaskStore {
+  static readonly SCHEMA_VERSION = 1;
   private db: DatabaseSync;
 
   constructor(path: string) {
     this.db = new DatabaseSync(path);
-    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+    this.db.exec('PRAGMA foreign_keys = ON;');
+    const version = Number((this.db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined)?.user_version ?? 0);
+    if (version > TaskStore.SCHEMA_VERSION) {
+      this.db.close();
+      throw new Error(`数据库版本 ${version} 高于当前支持版本 ${TaskStore.SCHEMA_VERSION}`);
+    }
+    this.db.exec('PRAGMA journal_mode = WAL;');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
@@ -212,6 +221,12 @@ export class TaskStore {
         WHERE archived_at IS NULL AND substatus NOT IN ('accepted','closed');
       CREATE INDEX IF NOT EXISTS idx_tasks_archived_lane ON tasks(archived_at, lane, updated_at DESC);
     `);
+      this.db.exec(`PRAGMA user_version=${TaskStore.SCHEMA_VERSION}; COMMIT;`);
+    } catch (error) {
+      try { this.db.exec('ROLLBACK'); } catch { /* no active transaction */ }
+      this.db.close();
+      throw error;
+    }
   }
 
   importLegacy(path: string): number {

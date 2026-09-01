@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TaskStore } from './taskStore.js';
 import { emptyExecutionSnapshot } from './executionTracker.js';
@@ -18,6 +19,42 @@ afterEach(() => {
 });
 
 describe('TaskStore', () => {
+  it('sets a schema version and reopens idempotently', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'codex-workboard-store-'));
+    const databasePath = path.join(dir, 'versioned.sqlite');
+    const first = new TaskStore(databasePath);
+    first.close();
+    const raw = new DatabaseSync(databasePath);
+    expect(raw.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: TaskStore.SCHEMA_VERSION });
+    raw.close();
+    const second = new TaskStore(databasePath);
+    second.close();
+  });
+
+  it('rejects future schemas and rolls back a failed legacy migration transaction', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'codex-workboard-store-'));
+    const futurePath = path.join(dir, 'future.sqlite');
+    const future = new DatabaseSync(futurePath);
+    future.exec("PRAGMA journal_mode=DELETE; PRAGMA user_version=999; CREATE TABLE marker(value TEXT); INSERT INTO marker VALUES ('unchanged');");
+    future.close();
+    expect(() => new TaskStore(futurePath)).toThrow('高于当前支持版本');
+    const futureReadback = new DatabaseSync(futurePath);
+    expect(futureReadback.prepare('PRAGMA journal_mode').get()).toMatchObject({ journal_mode: 'delete' });
+    expect(futureReadback.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 999 });
+    expect(futureReadback.prepare('SELECT value FROM marker').get()).toMatchObject({ value: 'unchanged' });
+    futureReadback.close();
+
+    const brokenPath = path.join(dir, 'broken.sqlite');
+    const broken = new DatabaseSync(brokenPath);
+    broken.exec("CREATE TABLE tasks(id TEXT PRIMARY KEY, title TEXT); INSERT INTO tasks VALUES ('kept','before');");
+    broken.close();
+    expect(() => new TaskStore(brokenPath)).toThrow();
+    const readback = new DatabaseSync(brokenPath);
+    expect(readback.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 0 });
+    expect(readback.prepare("SELECT title FROM tasks WHERE id='kept'").get()).toMatchObject({ title: 'before' });
+    expect(readback.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='audit_events'").get()).toBeUndefined();
+    readback.close();
+  });
   it('creates and moves a task while preserving an audit trail', () => {
     const db = store();
     const created = db.create({ title: '支持新增任务', substatus: 'idea', projectName: '人民币利率', projectPath: '/projects/rmb' });
