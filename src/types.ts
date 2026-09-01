@@ -219,8 +219,8 @@ export interface DesktopApi {
   respondToUserInput(input: { taskId: string; requestId: RequestId; answers: Record<string, { answers: string[] }> }): Promise<ExecutionSnapshot>;
   cancelUserInput(input: { taskId: string; requestId: RequestId }): Promise<ExecutionSnapshot>;
   onExecutionEvent(callback: (payload: { snapshot: ExecutionSnapshot; task: Task }) => void): () => void;
-  openThreadInCodex(threadId: string): Promise<void>;
-  handoffToCodex(input: { taskId: string; threadId: string }): Promise<{ task: Task; interrupted: boolean }>;
+  openThreadInCodex(threadId: string): Promise<CodexThreadOpenResult>;
+  handoffToCodex(input: { taskId: string; threadId: string }): Promise<{ task: Task; interrupted: boolean; openResult: CodexThreadOpenResult }>;
   updateConversation(threadId: string, input: { category?: string; tags?: string[]; note?: string }): Promise<CodexThreadSummary>;
   createTask(input: CreateTaskInput): Promise<Task>;
   bulkCreateTasks(): Promise<BulkTaskResult>;
@@ -232,6 +232,12 @@ export interface DesktopApi {
   aiReviewTask(id: string, input: { focus?: string }): Promise<{ task: Task; decision: 'accepted' | 'rework'; note: string; reviewThreadId: string }>;
   runDailyMaintenance(): Promise<{ created: number; stagedByLane: Record<Lane, number>; archived: number; archivedTaskIds: string[]; activeTasks: number; ranAt: string }>;
   archiveCompletedTasks(): Promise<{ archived: number; archivedTaskIds: string[]; activeTasks: number; ranAt: string }>;
+}
+
+export interface CodexThreadOpenResult {
+  opened: boolean;
+  fallbackCopied: boolean;
+  instruction: string;
 }
 
 declare global {

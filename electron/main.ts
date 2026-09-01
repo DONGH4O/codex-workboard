@@ -1,9 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, shell } from 'electron';
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CodexBridge, isThreadNotFoundError, type CodexBridgeEvent } from './codexBridge.js';
+import { openCodexThread } from './codexLink.js';
 import { loadBootstrapConversations } from './bootstrap.js';
 import { emptyExecutionSnapshot, eventThreadId, eventTurnId, reduceExecutionSnapshot, type ApprovalDecision, type ExecutionPermissionPreset, type ExecutionSnapshot, type RequestId } from './executionTracker.js';
 import { browserWindowPlatformOptions, shouldQuitWhenAllWindowsClose, shouldSkipCodexSync, WINDOWS_APP_USER_MODEL_ID } from './platform.js';
@@ -298,8 +299,7 @@ function registerIpc(): void {
     return store.getExecutionSnapshot(input.taskId);
   });
   ipcMain.handle('threads:open', async (_event, threadId: string) => {
-    if (!/^[a-zA-Z0-9-]+$/.test(threadId)) throw new Error('无效的对话 ID');
-    await shell.openExternal(`codex://threads/${encodeURIComponent(threadId)}`);
+    return openCodexThread(threadId, (url) => shell.openExternal(url), (text) => clipboard.writeText(text));
   });
   ipcMain.handle('threads:handoff-to-codex', async (_event, input: { taskId: string; threadId: string }) => {
     const task = store.get(input.taskId);
@@ -315,8 +315,8 @@ function registerIpc(): void {
       publishExecution(interrupted, updatedTask);
     }
     await bridge.unsubscribeThread(input.threadId);
-    await shell.openExternal(`codex://threads/${encodeURIComponent(input.threadId)}`);
-    return { task: store.get(task.id), interrupted: Boolean(live) };
+    const openResult = await openCodexThread(input.threadId, (url) => shell.openExternal(url), (text) => clipboard.writeText(text));
+    return { task: store.get(task.id), interrupted: Boolean(live), openResult };
   });
   ipcMain.handle('threads:update-meta', (_event, threadId: string, input: { category?: string; tags?: string[]; note?: string }) =>
     store.updateConversation(threadId, input));

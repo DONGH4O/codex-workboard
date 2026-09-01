@@ -55,6 +55,7 @@ import type {
   Task,
 } from './types';
 import { ConversationPanel, ConversationView } from './ConversationView';
+import { codexHandoffNotice, openCodexThreadWithNotice } from './codexOpen';
 
 type AppView = 'board' | 'conversations' | 'archive';
 type AppNotice = { tone: 'error' | 'success'; text: string; actionLabel?: string; onAction?: () => void | Promise<void> };
@@ -542,19 +543,24 @@ function App() {
     setTasks((current) => current.map((item) => (item.id === updated.id ? updated : item)));
   }
 
+  async function openThreadInCodex(threadId: string) {
+    const notice = await openCodexThreadWithNotice(threadId, window.codexTaskboard.openThreadInCodex, userFacingError);
+    if (notice) setNotice(notice);
+  }
+
   async function openTaskInCodex(task: Task) {
     if (!task.threadId) return;
     const execution = executionRef.current[task.id];
     const live = execution?.status === 'running' || execution?.status === 'waiting_approval' || execution?.status === 'waiting_input';
     if (!live) {
-      await window.codexTaskboard.openThreadInCodex(task.threadId);
+      await openThreadInCodex(task.threadId);
       return;
     }
     if (!window.confirm('这段对话当前由 Workboard 执行。转到 Codex 会中断当前回合并释放会话，确认继续？')) return;
     try {
       const result = await window.codexTaskboard.handoffToCodex({ taskId: task.id, threadId: task.threadId });
       replaceTask(result.task);
-      setNotice({ tone: 'success', text: '已释放 Workboard 会话并转到 Codex，可在那里继续对话' });
+      setNotice(codexHandoffNotice(result.openResult));
     } catch (error) {
       setNotice({ tone: 'error', text: userFacingError(error) });
     }
@@ -789,7 +795,7 @@ function App() {
             if (!categories.includes(updated.category)) setCategories((current) => [...current, updated.category]);
           }}
           onCreateTask={(threadId) => openCreate(threadId)}
-          onOpen={(threadId) => void window.codexTaskboard.openThreadInCodex(threadId)}
+          onOpen={(threadId) => void openThreadInCodex(threadId)}
         />
       )}
 
@@ -1370,7 +1376,8 @@ function TaskPanel({ task, thread, execution, onClose, onTaskChange, onArchive, 
   async function openConversationInCodex() {
     if (!conversationThreadId) return;
     if (!executionBusy) {
-      await window.codexTaskboard.openThreadInCodex(conversationThreadId);
+      const notice = await openCodexThreadWithNotice(conversationThreadId, window.codexTaskboard.openThreadInCodex, userFacingError);
+      if (notice) onNotice(notice);
       return;
     }
     if (!window.confirm('这段对话当前由 Workboard 执行。转到 Codex 会中断当前回合并释放会话，确认继续？')) return;
@@ -1379,7 +1386,7 @@ function TaskPanel({ task, thread, execution, onClose, onTaskChange, onArchive, 
       const result = await window.codexTaskboard.handoffToCodex({ taskId: task.id, threadId: conversationThreadId });
       onTaskChange(result.task);
       setEvents(await window.codexTaskboard.listAuditEvents(task.id));
-      onNotice({ tone: 'success', text: '已释放 Workboard 会话并转到 Codex，可在那里继续对话' });
+      onNotice(codexHandoffNotice(result.openResult));
     } catch (error) {
       onNotice({ tone: 'error', text: userFacingError(error) });
     } finally {
