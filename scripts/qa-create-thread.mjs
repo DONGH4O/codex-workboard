@@ -75,6 +75,8 @@ export async function main(dependencies = {}) {
   let completion;
   let createdQaThread = false;
   let resumedAfterRestart = false;
+  let platformFamily = null;
+  let platformOs = null;
   let modelConfigured = false;
   let effortConfigured = false;
   let serviceTierConfigured = false;
@@ -83,6 +85,16 @@ export async function main(dependencies = {}) {
   let title = '';
   let primaryError;
   let cleanupError;
+  const capturePlatform = (target) => {
+    if (!target || (platformFamily !== null && platformOs !== null)) return;
+    try {
+      const status = typeof target.status === 'function' ? target.status() : {};
+      platformFamily ??= status?.platformFamily ?? null;
+      platformOs ??= status?.platformOs ?? null;
+    } catch {
+      // Platform evidence is supplementary and must not replace the scenario result.
+    }
+  };
   const stopAttempts = new Set();
   const stopBridgeOnce = async (target) => {
     if (!target || stopAttempts.has(target)) return !cleanupError;
@@ -99,6 +111,7 @@ export async function main(dependencies = {}) {
   try {
     bridge = createBridge();
     const models = await bridge.listModels();
+    capturePlatform(bridge);
     const model = models.find((item) => item.isDefault) ?? models[0];
     if (!model) throw new Error('App Server 未返回可用模型');
     const serviceTier = model.serviceTiers?.find((tier) => tier.id === 'priority') ?? model.serviceTiers?.[0] ?? null;
@@ -156,6 +169,7 @@ export async function main(dependencies = {}) {
     unsubscribe();
     const finalBridge = bridge;
     bridge = undefined;
+    capturePlatform(finalBridge);
     await stopBridgeOnce(finalBridge);
   }
 
@@ -168,6 +182,8 @@ export async function main(dependencies = {}) {
     stage,
     eventMethods,
     permission,
+    platformFamily,
+    platformOs,
     modelConfigured,
     effortConfigured,
     serviceTierConfigured,

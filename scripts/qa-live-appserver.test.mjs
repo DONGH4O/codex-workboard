@@ -48,6 +48,7 @@ function fakeBridge(overrides = {}) {
     bridge: {
       onEvent: vi.fn((next) => { listener = next; return unsubscribe; }),
       listModels: vi.fn(async () => [model]),
+      status: vi.fn(() => ({ platformFamily: 'windows', platformOs: 'windows' })),
       stop: vi.fn(async () => {}),
       ...overrides,
     },
@@ -108,7 +109,8 @@ describe('qa-live-appserver isolated safety', () => {
       ...invocation('list-sync'), safetyRuntime, createBridge: () => fake.bridge,
       buildTurnStartParams, output, terminal,
     });
-    expect(evidence).toMatchObject({ result: 'PASS', listSyncCompleted: true, permission: null });
+    expect(evidence).toMatchObject({ result: 'PASS', listSyncCompleted: true, permission: null, platformFamily: 'windows', platformOs: 'windows' });
+    expect(fake.bridge.status).toHaveBeenCalledTimes(1);
     expect(fake.bridge.listThreads).toHaveBeenCalledTimes(1);
     expect(fake.bridge.listModels).not.toHaveBeenCalled();
     expect(fake.bridge.readThread).not.toHaveBeenCalled();
@@ -131,7 +133,22 @@ describe('qa-live-appserver isolated safety', () => {
     expect(fake.bridge.stop).toHaveBeenCalledTimes(1);
     expect(fake.unsubscribe).toHaveBeenCalledTimes(1);
     expect(output.mock.calls.at(-1)[0]).toMatchObject({ result: 'FAIL', listSyncCompleted: false });
+    expect(output.mock.calls.at(-1)[0]).toMatchObject({ platformFamily: 'windows', platformOs: 'windows' });
     expect(JSON.stringify(output.mock.calls.at(-1)[0])).not.toContain('private-without-origin');
+  });
+
+  it('does not replace a successful read-only result when platform status collection throws', async () => {
+    const fake = fakeBridge({
+      listThreads: vi.fn(async () => []),
+      status: vi.fn(() => { throw new Error('status unavailable'); }),
+    });
+    const output = vi.fn();
+    const evidence = await main({
+      ...invocation('list-sync'), safetyRuntime, createBridge: () => fake.bridge,
+      buildTurnStartParams, output, terminal: vi.fn(),
+    });
+    expect(evidence).toMatchObject({ result: 'PASS', listSyncCompleted: true, platformFamily: null, platformOs: null });
+    expect(fake.bridge.stop).toHaveBeenCalledTimes(1);
   });
 
   it('dispatches exactly the selected authorized handler and prints permission before bridge creation', async () => {

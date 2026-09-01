@@ -256,6 +256,18 @@ export async function main(dependencies = {}) {
   let effortConfigured = false;
   let serviceTierConfigured = false;
   let listSyncCompleted = false;
+  let platformFamily = null;
+  let platformOs = null;
+  const capturePlatform = (target) => {
+    if (!target || (platformFamily !== null && platformOs !== null)) return;
+    try {
+      const status = typeof target.status === 'function' ? target.status() : {};
+      platformFamily ??= status?.platformFamily ?? null;
+      platformOs ??= status?.platformOs ?? null;
+    } catch {
+      // Platform evidence is supplementary and must not replace the scenario result.
+    }
+  };
   const stopAttempts = new Set();
   const stopBridgeOnce = async (target) => {
     if (!target || stopAttempts.has(target)) return;
@@ -283,6 +295,7 @@ export async function main(dependencies = {}) {
     });
     const scenarioResult = await dispatchW3Scenario(config.scenario, handlers);
     listSyncCompleted = scenarioResult?.listSyncCompleted === true;
+    capturePlatform(bridge);
     completed = true;
   } catch (error) {
     primaryError = error;
@@ -290,6 +303,7 @@ export async function main(dependencies = {}) {
     queue?.close();
     const target = bridge;
     bridge = undefined;
+    capturePlatform(target);
     await stopBridgeOnce(target);
   }
 
@@ -301,6 +315,8 @@ export async function main(dependencies = {}) {
     stage: failed ? 'failed' : 'completed',
     eventMethods: queue?.events.map((event) => event.method),
     permission,
+    platformFamily,
+    platformOs,
     modelConfigured,
     effortConfigured,
     serviceTierConfigured,

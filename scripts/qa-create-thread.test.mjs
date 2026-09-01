@@ -52,6 +52,7 @@ describe('qa-create-thread import-safe isolated flow', () => {
     const unsubscribe = vi.fn();
     const first = {
       listModels: vi.fn(async () => [model()]),
+      status: vi.fn(() => ({ platformFamily: 'windows', platformOs: 'windows' })),
       createThread: vi.fn(async () => 'thread-secret'),
       onEvent: vi.fn((next) => { listener = next; return unsubscribe; }),
       sendToThread: vi.fn(async () => {
@@ -73,7 +74,7 @@ describe('qa-create-thread import-safe isolated flow', () => {
       argv, env, safetyRuntime, createBridge, buildTurnStartParams, output, terminal,
       now: () => new Date('2026-09-01T00:00:00.000Z'), timeoutMs: 50,
     });
-    expect(evidence).toMatchObject({ result: 'PASS', createdQaThread: 'retained', resumedAfterRestart: true });
+    expect(evidence).toMatchObject({ result: 'PASS', createdQaThread: 'retained', resumedAfterRestart: true, platformFamily: 'windows', platformOs: 'windows' });
     expect(first.createThread).toHaveBeenCalledWith(expect.objectContaining({ cwd: W3_WORKSPACE, title: expect.stringContaining('Windows Workboard 验收') }));
     expect(first.sendToThread).toHaveBeenCalledWith(expect.objectContaining({ permissionPreset: 'untrusted', cwd: W3_WORKSPACE }));
     expect(first.stop).toHaveBeenCalledTimes(1);
@@ -126,6 +127,7 @@ describe('qa-create-thread import-safe isolated flow', () => {
     const unsubscribe = vi.fn();
     const bridge = {
       listModels: vi.fn(async () => [model()]),
+      status: vi.fn(() => ({ platformFamily: 'windows', platformOs: 'windows' })),
       createThread: vi.fn(async () => 'thread-target'),
       onEvent: vi.fn((next) => { listener = next; return unsubscribe; }),
       sendToThread: vi.fn(async () => {
@@ -142,6 +144,7 @@ describe('qa-create-thread import-safe isolated flow', () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(bridge.deleteThread).not.toHaveBeenCalled();
     expect(output.mock.calls.at(-1)[0]).toMatchObject({ result: 'FAIL', createdQaThread: 'retained', errorKind: 'Error' });
+    expect(output.mock.calls.at(-1)[0]).toMatchObject({ platformFamily: 'windows', platformOs: 'windows' });
     expect(terminal).toHaveBeenCalledWith(expect.stringContaining('thread-target'));
   });
 
@@ -225,6 +228,7 @@ describe('qa-create-thread import-safe isolated flow', () => {
     const primary = new Error('primary model failure');
     const bridge = {
       listModels: vi.fn(async () => { throw primary; }),
+      status: vi.fn(() => { throw new Error('status unavailable'); }),
       stop: vi.fn(async () => { throw new Error('cleanup stop failure'); }),
     };
     const output = vi.fn();
@@ -236,6 +240,6 @@ describe('qa-create-thread import-safe isolated flow', () => {
     }
     expect(thrown).toBe(primary);
     expect(bridge.stop).toHaveBeenCalledTimes(1);
-    expect(output.mock.calls.at(-1)[0]).toMatchObject({ result: 'FAIL', cleanupFailed: true, createdQaThread: 'not-created' });
+    expect(output.mock.calls.at(-1)[0]).toMatchObject({ result: 'FAIL', cleanupFailed: true, createdQaThread: 'not-created', platformFamily: null, platformOs: null });
   });
 });

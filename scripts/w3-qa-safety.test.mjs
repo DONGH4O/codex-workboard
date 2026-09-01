@@ -192,6 +192,8 @@ describe('W3 permission and evidence boundary', () => {
       stage: 'failed',
       eventMethods: ['turn/completed', 'turn/started', 'turn/completed'],
       permission: summarizeW3TurnParams(ordinaryParams('untrusted'), W3_WORKSPACE),
+      platformFamily: 'windows',
+      platformOs: 'windows',
       createdQaThread: true,
       listSyncCompleted: true,
       error: new Error('thread-123 C:\\Users\\dongh secret reply'),
@@ -200,11 +202,14 @@ describe('W3 permission and evidence boundary', () => {
     });
     const serialized = JSON.stringify(evidence);
     expect(evidence.createdQaThread).toBe('retained');
+    expect(evidence).toMatchObject({ platformFamily: 'windows', platformOs: 'windows' });
     expect(evidence.listSyncCompleted).toBe(true);
     expect(evidence.eventMethods).toEqual(['turn/completed', 'turn/started']);
     expect(serialized).not.toContain('thread-123');
     expect(serialized).not.toContain('secret reply');
     expect(serialized).not.toContain('C:\\Users\\dongh');
+    expect(buildW3Evidence({ ok: true, script: 'qa', scenario: 'basic-create', stage: 'completed', platformFamily: 'secret value', platformOs: '' }))
+      .toMatchObject({ platformFamily: null, platformOs: null });
   });
 
   it('rejects an unknown evidence stage and suppresses an unknown allowed scenario', async () => {

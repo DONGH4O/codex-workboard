@@ -192,6 +192,7 @@ export function summarizeW3TurnParams(params, expectedWorkspace) {
 
 export function buildW3Evidence(input) {
   if (!W3_EVIDENCE_STAGES.has(input.stage)) throw new Error('W3 证据阶段无效');
+  const platformField = (value) => typeof value === 'string' && /^[a-zA-Z0-9._-]{1,40}$/.test(value) ? value : null;
   return {
     result: input.ok ? 'PASS' : 'FAIL',
     script: input.script,
@@ -199,6 +200,8 @@ export function buildW3Evidence(input) {
     stage: input.stage,
     eventMethods: [...new Set(input.eventMethods ?? [])].filter((item) => typeof item === 'string').sort(),
     permission: input.permission ?? null,
+    platformFamily: platformField(input.platformFamily),
+    platformOs: platformField(input.platformOs),
     modelConfigured: Boolean(input.modelConfigured),
     effortConfigured: Boolean(input.effortConfigured),
     serviceTierConfigured: Boolean(input.serviceTierConfigured),
