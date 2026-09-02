@@ -411,7 +411,7 @@ export class TaskStore {
     const now = new Date().toISOString();
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const active = this.db.prepare(`SELECT e.task_id,e.turn_id,t.lane,t.substatus,t.archived_at
+      const active = this.db.prepare(`SELECT e.task_id,e.turn_id,e.started_at,t.lane,t.substatus,t.archived_at,t.created_at AS task_created_at
         FROM execution_snapshots e JOIN tasks t ON t.id=e.task_id
         WHERE e.status IN ('running','waiting_approval','waiting_input')`).all() as Row[];
       const result = this.db.prepare(`UPDATE execution_snapshots SET status='interrupted',completed_at=?,updated_at=?,
@@ -422,6 +422,24 @@ export class TaskStore {
         this.db.prepare("UPDATE tasks SET lane='execution',substatus='blocked',end_at=NULL,updated_at=? WHERE id=?").run(now, row.task_id);
         if (row.lane !== 'execution') this.addEvent(String(row.task_id), 'system', 'lane_changed', `${String(row.lane)} → execution`);
         const turn = row.turn_id ? `Codex 回合 ${String(row.turn_id)}` : 'Codex 执行';
+        const normalStartedNote = `${turn} 已启动`;
+        const recoveredStartedNote = `${turn} 的启动事实依据遗留活动快照补记`;
+        const hasStarted = row.turn_id
+          ? this.db.prepare("SELECT 1 FROM audit_events WHERE task_id=? AND action='execution_started' AND note IN (?,?) LIMIT 1")
+            .get(row.task_id, normalStartedNote, recoveredStartedNote)
+          : this.db.prepare("SELECT 1 FROM audit_events WHERE task_id=? AND action='execution_started' LIMIT 1").get(row.task_id);
+        if (!hasStarted) {
+          const snapshotStartedAt = typeof row.started_at === 'string' ? row.started_at : '';
+          const taskCreatedAt = typeof row.task_created_at === 'string' ? row.task_created_at : '';
+          const snapshotStartedMs = Date.parse(snapshotStartedAt);
+          const taskCreatedMs = Date.parse(taskCreatedAt);
+          const nowMs = Date.parse(now);
+          const startedAt = Number.isFinite(snapshotStartedMs) && Number.isFinite(taskCreatedMs) && Number.isFinite(nowMs)
+            && snapshotStartedMs >= taskCreatedMs && snapshotStartedMs <= nowMs
+            ? new Date(snapshotStartedMs).toISOString()
+            : now;
+          this.addEvent(String(row.task_id), 'system', 'execution_started', recoveredStartedNote, startedAt);
+        }
         this.addEvent(String(row.task_id), 'system', 'execution_interrupted_on_restart', `${turn} 因 Workboard 重启标记为中断，执行证据已保留`);
       }
       this.db.exec('COMMIT');
@@ -915,10 +933,10 @@ export class TaskStore {
     this.addEvent(taskId, 'system', 'conversation_handed_off', `已中断 Workboard 当前回合并释放对话 ${threadId}，转到 Codex 继续`);
   }
 
-  private addEvent(taskId: string, actorRole: 'system' | 'executor' | 'auditor', action: string, note: string): void {
+  private addEvent(taskId: string, actorRole: 'system' | 'executor' | 'auditor', action: string, note: string, createdAt = new Date().toISOString()): void {
     this.db
       .prepare('INSERT INTO audit_events (id,task_id,actor_role,action,note,created_at) VALUES (?,?,?,?,?,?)')
-      .run(randomUUID(), taskId, actorRole, action, note, new Date().toISOString());
+      .run(randomUUID(), taskId, actorRole, action, note, createdAt);
   }
 
   close(): void {

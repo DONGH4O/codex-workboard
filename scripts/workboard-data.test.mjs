@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { acquireDataAccess } from '../electron/dataAccessGate.js';
+import { emptyExecutionSnapshot } from '../electron/executionTracker.js';
+import { TaskStore } from '../electron/taskStore.js';
 import { backupWorkboardData, restoreWorkboardData, verifyWorkboardData } from './workboard-data.mjs';
 
 function sourceFixture() {
@@ -25,6 +27,23 @@ function sourceFixture() {
 }
 
 describe('Workboard backup and restore', () => {
+  it('accepts restart recovery that reconstructs a missing execution start from an active snapshot', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'workboard-restart-verify-'));
+    const db = new TaskStore(path.join(root, 'taskboard.sqlite'));
+    const task = db.create({ title: '恢复执行审计', lane: 'execution', threadId: 'thread-recovery' });
+    db.saveExecutionSnapshot({
+      ...emptyExecutionSnapshot({ taskId: task.id, threadId: 'thread-recovery', turnId: 'turn-recovery' }),
+      status: 'running',
+    });
+    expect(db.expireLiveExecutions()).toBe(1);
+    db.close();
+    expect(verifyWorkboardData(root)).toMatchObject({
+      counts: { tasks: 1, execution_snapshots: 1 },
+      actions: { created: 1, execution_started: 1, execution_interrupted_on_restart: 1 },
+      keyActionOrderValid: true,
+    });
+  });
+
   it('copies a closed data directory, excludes runtime material, and restores to a new target', async () => {
     const { parent, source } = sourceFixture();
     const backup = path.join(parent, 'backup');

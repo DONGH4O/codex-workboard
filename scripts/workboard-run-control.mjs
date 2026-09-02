@@ -27,12 +27,15 @@ export function validateRunBinding(state, processInfo) {
     || state.pipePath !== `\\\\.\\pipe\\codex-workboard-${state.runId}`) throw new Error('Workboard 运行状态格式无效');
   if (!processInfo) return { running: false, reason: 'process-missing' };
   const commandLine = String(processInfo.commandLine ?? '');
-  const matches = canonical(processInfo.executablePath ?? '') === canonical(state.executablePath)
-    && String(processInfo.processCreatedAt) === String(state.processCreatedAt)
-    && commandLine.includes(`--workboard-run-id=${state.runId}`)
-    && commandLine.includes(`--workboard-data-dir=${state.dataDir}`)
-    && commandLine.includes(`--workboard-control-pipe=${state.pipePath}`);
-  if (!matches) throw new Error('操作系统进程与 Workboard 运行状态绑定不一致');
+  const checks = {
+    executablePath: canonical(processInfo.executablePath ?? '') === canonical(state.executablePath),
+    processCreatedAt: String(processInfo.processCreatedAt) === String(state.processCreatedAt),
+    runId: commandLine.includes(`--workboard-run-id=${state.runId}`),
+    dataDir: commandLine.includes(`--workboard-data-dir=${state.dataDir}`),
+    pipePath: commandLine.includes(`--workboard-control-pipe=${state.pipePath}`),
+  };
+  const mismatches = Object.entries(checks).filter(([, matched]) => !matched).map(([field]) => field);
+  if (mismatches.length) throw new Error(`操作系统进程与 Workboard 运行状态绑定不一致：${mismatches.join(', ')}`);
   return { running: true, reason: 'verified' };
 }
 
@@ -131,9 +134,10 @@ export async function startWorkboard(binding, runtime = {}) {
       validateRunBinding(candidateState, info);
       let ready = false;
       let readyError;
-      for (let attempt = 0; attempt < 20 && !ready; attempt += 1) {
-        try { await (runtime.probeReady ?? probeControl)(candidateState, 'ping', 250); ready = true; }
-        catch (error) { readyError = error; await (runtime.delay ?? delay)(100); }
+      const readyDeadline = Date.now() + 30_000;
+      for (let attempt = 0; !ready && attempt < 120 && Date.now() < readyDeadline; attempt += 1) {
+        try { await (runtime.probeReady ?? probeControl)(candidateState, 'ping', 1_000); ready = true; }
+        catch (error) { readyError = error; await (runtime.delay ?? delay)(200); }
       }
       if (!ready) throw readyError ?? new Error('Workboard 控制管道未就绪');
       writeRunStateAtomically(binding.state, candidateState, runtime);
@@ -168,15 +172,31 @@ export async function statusWorkboard(stateDir, runtime = {}) {
   return { state, ...result, staleRemoved: false };
 }
 
-async function probeControl(state, action, timeoutMs = 1_500) {
+export async function probeControl(state, action, timeoutMs = 1_500) {
   await new Promise((resolve, reject) => {
-    let accepted = false;
+    let input = '';
+    let settled = false;
     const socket = net.createConnection(state.pipePath);
-    const timer = setTimeout(() => { socket.destroy(); reject(new Error('Workboard 控制管道超时')); }, timeoutMs);
-    socket.on('connect', () => socket.end(JSON.stringify({ action, runId: state.runId })));
-    socket.on('data', (data) => { if (String(data).includes('"accepted":true')) { accepted = true; clearTimeout(timer); resolve(); } });
-    socket.on('close', () => { if (!accepted) { clearTimeout(timer); reject(new Error('Workboard 控制管道未接受请求')); } });
-    socket.on('error', (error) => { clearTimeout(timer); reject(error); });
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error); else resolve();
+    };
+    const timer = setTimeout(() => { socket.destroy(); finish(new Error('Workboard 控制管道超时')); }, timeoutMs);
+    socket.setEncoding('utf8');
+    socket.on('connect', () => socket.write(`${JSON.stringify({ action, runId: state.runId })}\n`));
+    socket.on('data', (data) => {
+      input += data;
+      const frameEnd = input.indexOf('\n');
+      if (frameEnd < 0) return;
+      let accepted = false;
+      try { accepted = JSON.parse(input.slice(0, frameEnd))?.accepted === true; } catch { /* reject below */ }
+      socket.end();
+      finish(accepted ? undefined : new Error('Workboard 控制管道拒绝请求'));
+    });
+    socket.on('close', () => finish(new Error('Workboard 控制管道未接受请求')));
+    socket.on('error', (error) => finish(error));
   });
 }
 const killTree = (pid) => execFilePromise('taskkill.exe', ['/PID', String(pid), '/T', '/F']);

@@ -12,6 +12,7 @@ import { TaskStore, type TaskInput } from './taskStore.js';
 import { acquireDataAccess, type DataAccessLease } from './dataAccessGate.js';
 import { createShutdownBarrier } from './shutdownBarrier.js';
 import { parseWorkboardRunArgs, startRunControlServer } from './runControl.js';
+import { saveDemoExecution } from './demoSeed.js';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const runControl = parseWorkboardRunArgs(process.argv.slice(1));
@@ -483,7 +484,7 @@ app.whenReady().then(async () => {
       threadId: 'demo-live-thread',
       acceptanceCriteria: '对话记录可以在右侧面板读取。',
     });
-    store.saveExecutionSnapshot({
+    saveDemoExecution(store, {
       ...emptyExecutionSnapshot({ taskId: executionDemo.id, threadId: 'demo-live-thread', turnId: 'demo-turn', model: 'gpt-5.6-terra', effort: 'medium' }),
       status: 'waiting_approval',
       plan: [
@@ -524,7 +525,7 @@ app.whenReady().then(async () => {
       threadId: 'demo-steer-thread',
       acceptanceCriteria: '引导内容进入同一个执行回合，并写入审计轨迹。',
     });
-    store.saveExecutionSnapshot({
+    saveDemoExecution(store, {
       ...emptyExecutionSnapshot({ taskId: steerDemo.id, threadId: 'demo-steer-thread', turnId: 'demo-steer-turn', model: 'gpt-5.6-terra', effort: 'medium' }),
       status: 'running',
       plan: [{ step: '等待用户补充方向', status: 'inProgress' }],

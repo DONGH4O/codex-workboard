@@ -307,7 +307,104 @@ describe('TaskStore', () => {
     ]));
     expect(readback.expireLiveExecutions()).toBe(0);
     expect(readback.listEvents(task.id).filter((event) => event.action === 'execution_interrupted_on_restart')).toHaveLength(1);
+    expect(readback.listEvents(task.id).filter((event) => event.action === 'execution_started')).toHaveLength(1);
     readback.close();
+  });
+
+  it('recovers a missing start audit from an active snapshot before recording restart interruption', () => {
+    const db = store();
+    const task = db.create({ title: '恢复缺失启动审计', lane: 'execution', threadId: 'thread-gap' });
+    db.saveExecutionSnapshot({
+      ...emptyExecutionSnapshot({ taskId: task.id, threadId: 'thread-gap', turnId: 'turn-gap' }),
+      status: 'running',
+    });
+    expect(db.listEvents(task.id).some((event) => event.action === 'execution_started')).toBe(false);
+    expect(db.expireLiveExecutions()).toBe(1);
+    const executionEvents = db.listEvents(task.id).filter((event) => ['execution_started', 'execution_interrupted_on_restart'].includes(event.action));
+    expect(executionEvents.map((event) => event.action).sort()).toEqual(['execution_interrupted_on_restart', 'execution_started']);
+    const started = executionEvents.find((event) => event.action === 'execution_started')!;
+    const interrupted = executionEvents.find((event) => event.action === 'execution_interrupted_on_restart')!;
+    expect(started.actorRole).toBe('system');
+    expect(started.note).toContain('依据遗留活动快照补记');
+    expect(started.createdAt <= interrupted.createdAt).toBe(true);
+    expect(db.expireLiveExecutions()).toBe(0);
+    expect(db.listEvents(task.id).filter((event) => event.action === 'execution_started')).toHaveLength(1);
+    expect(db.listEvents(task.id).filter((event) => event.action === 'execution_interrupted_on_restart')).toHaveLength(1);
+    db.close();
+  });
+
+  it('does not reuse a previous turn start when the current active turn is missing its start audit', () => {
+    const db = store();
+    const task = db.create({ title: '多回合恢复', lane: 'execution', threadId: 'thread-multi-turn' });
+    db.markExecutionStarted(task.id, 'turn-old');
+    db.saveExecutionSnapshot({
+      ...emptyExecutionSnapshot({ taskId: task.id, threadId: 'thread-multi-turn', turnId: 'turn-new' }),
+      status: 'running',
+    });
+    expect(db.expireLiveExecutions()).toBe(1);
+    const starts = db.listEvents(task.id).filter((event) => event.action === 'execution_started');
+    expect(starts).toHaveLength(2);
+    expect(starts.map((event) => event.note)).toEqual(expect.arrayContaining([
+      'Codex 回合 turn-old 已启动',
+      'Codex 回合 turn-new 的启动事实依据遗留活动快照补记',
+    ]));
+    expect(db.expireLiveExecutions()).toBe(0);
+    expect(db.listEvents(task.id).filter((event) => event.action === 'execution_started')).toHaveLength(2);
+    db.close();
+  });
+
+  it('compares recovered snapshot times by instant and falls back for out-of-range or invalid values', () => {
+    const offsetDb = store();
+    const offsetTask = offsetDb.create({ title: '时区时间', lane: 'execution', threadId: 'thread-offset' });
+    const taskInstant = Date.parse(offsetTask.createdAt);
+    const offsetStartedAt = new Date(taskInstant + (8 * 60 * 60 * 1000)).toISOString().replace('Z', '+08:00');
+    offsetDb.saveExecutionSnapshot({
+      ...emptyExecutionSnapshot({ taskId: offsetTask.id, threadId: 'thread-offset', turnId: 'turn-offset' }),
+      status: 'running',
+      startedAt: offsetStartedAt,
+    });
+    offsetDb.expireLiveExecutions();
+    const offsetEvent = offsetDb.listEvents(offsetTask.id).find((event) => event.note.includes('依据遗留活动快照补记'))!;
+    expect(offsetEvent.createdAt).toBe(new Date(taskInstant).toISOString());
+    offsetDb.close();
+
+    for (const [label, startedAt] of [['early', '2000-01-01T00:00:00.000Z'], ['future', '2999-01-01T00:00:00.000Z'], ['invalid', 'not-a-date']]) {
+      const db = store();
+      const task = db.create({ title: `回退时间-${label}`, lane: 'execution', threadId: `thread-${label}` });
+      const before = Date.now();
+      db.saveExecutionSnapshot({
+        ...emptyExecutionSnapshot({ taskId: task.id, threadId: `thread-${label}`, turnId: `turn-${label}` }),
+        status: 'running',
+        startedAt,
+      });
+      db.expireLiveExecutions();
+      const recovered = db.listEvents(task.id).find((event) => event.note.includes('依据遗留活动快照补记'))!;
+      expect(Date.parse(recovered.createdAt)).toBeGreaterThanOrEqual(before);
+      expect(Date.parse(recovered.createdAt)).toBeLessThanOrEqual(Date.now());
+      db.close();
+    }
+  });
+
+  it('rolls back snapshot interruption and recovered start audit when restart recovery fails', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'codex-taskboard-restart-rollback-'));
+    testDirs.push(dir);
+    const databasePath = path.join(dir, 'tasks.sqlite');
+    const first = new TaskStore(databasePath);
+    const task = first.create({ title: '事务回滚', lane: 'execution', threadId: 'thread-rollback' });
+    first.saveExecutionSnapshot({
+      ...emptyExecutionSnapshot({ taskId: task.id, threadId: 'thread-rollback', turnId: 'turn-rollback' }),
+      status: 'running',
+    });
+    first.close();
+    const raw = new DatabaseSync(databasePath);
+    raw.exec("CREATE TRIGGER reject_restart_event BEFORE INSERT ON audit_events WHEN NEW.action='execution_interrupted_on_restart' BEGIN SELECT RAISE(ABORT, 'forced restart failure'); END;");
+    raw.close();
+    const recovered = new TaskStore(databasePath);
+    expect(() => recovered.expireLiveExecutions()).toThrow('forced restart failure');
+    expect(recovered.getExecutionSnapshot(task.id)?.status).toBe('running');
+    expect(recovered.listEvents(task.id).some((event) => event.action === 'execution_started')).toBe(false);
+    expect(recovered.listEvents(task.id).some((event) => event.action === 'execution_interrupted_on_restart')).toBe(false);
+    recovered.close();
   });
 
   it('persists string-id user input requests and clears them after restart', () => {
@@ -348,6 +445,8 @@ describe('TaskStore', () => {
     expect(db.getExecutionSnapshot(archived.id)?.status).toBe('interrupted');
     expect(db.listEvents(accepted.id).some((event) => event.action === 'execution_interrupted_on_restart')).toBe(false);
     expect(db.listEvents(archived.id).some((event) => event.action === 'execution_interrupted_on_restart')).toBe(false);
+    expect(db.listEvents(accepted.id).some((event) => event.action === 'execution_started')).toBe(false);
+    expect(db.listEvents(archived.id).some((event) => event.action === 'execution_started')).toBe(false);
     db.close();
   });
 

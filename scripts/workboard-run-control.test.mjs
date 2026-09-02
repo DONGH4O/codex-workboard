@@ -1,10 +1,45 @@
 import { mkdtempSync, readFileSync } from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { buildLaunchBinding, startWorkboard, statusWorkboard, stopWorkboard, validateRunBinding } from './workboard-run-control.mjs';
+import { buildLaunchBinding, probeControl, startWorkboard, statusWorkboard, stopWorkboard, validateRunBinding } from './workboard-run-control.mjs';
+import { startRunControlServer } from '../electron/runControl.ts';
 
 describe('isolated Windows run control', () => {
+  it.runIf(process.platform === 'win32')('uses the production framed pipe for ping, rejection, and acknowledged stop', async () => {
+    const runId = `pipe-${Date.now()}`;
+    const pipePath = `\\\\.\\pipe\\codex-workboard-${runId}`;
+    let quitRequested = false;
+    const server = await startRunControlServer(pipePath, runId, () => { quitRequested = true; });
+    try {
+      await probeControl({ runId, pipePath }, 'ping', 2_000);
+      expect(quitRequested).toBe(false);
+      await expect(probeControl({ runId: `${runId}-wrong`, pipePath }, 'ping', 2_000)).rejects.toThrow('拒绝');
+      await expect(probeControl({ runId, pipePath }, 'unsupported', 2_000)).rejects.toThrow('拒绝');
+      expect(quitRequested).toBe(false);
+      const fragmentedResponse = await new Promise((resolve, reject) => {
+        const socket = net.createConnection(pipePath);
+        let response = '';
+        const timer = setTimeout(() => { socket.destroy(); reject(new Error('fragmented pipe timeout')); }, 2_000);
+        socket.setEncoding('utf8');
+        socket.on('connect', () => {
+          const frame = JSON.stringify({ action: 'ping', runId });
+          socket.write(frame.slice(0, 7));
+          setImmediate(() => socket.write(`${frame.slice(7)}\n`));
+        });
+        socket.on('data', (chunk) => { response += chunk; });
+        socket.on('end', () => { clearTimeout(timer); resolve(response); });
+        socket.on('error', (error) => { clearTimeout(timer); reject(error); });
+      });
+      expect(JSON.parse(fragmentedResponse.trim())).toEqual({ accepted: true });
+      await probeControl({ runId, pipePath }, 'stop', 2_000);
+      await vi.waitFor(() => expect(quitRequested).toBe(true));
+    } finally {
+      await server.close();
+    }
+  });
+
   it('atomically binds start, status, graceful stop and state cleanup', async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'workboard-control-'));
     const exe = path.join(root, 'Codex Workboard.exe');
@@ -23,7 +58,8 @@ describe('isolated Windows run control', () => {
 
   it('refuses mismatched process identity before stop and only uses a targeted fallback after revalidation', async () => {
     const state = { version: 1, runId: '12345678', pid: 42, processCreatedAt: 'time', executablePath: 'C:\\Workboard.exe', dataDir: 'F:\\data', pipePath: '\\\\.\\pipe\\codex-workboard-12345678' };
-    expect(() => validateRunBinding(state, { executablePath: 'C:\\Other.exe', processCreatedAt: 'time', commandLine: '' })).toThrow('绑定不一致');
+    expect(() => validateRunBinding(state, { executablePath: 'C:\\Other.exe', processCreatedAt: 'time', commandLine: '' }))
+      .toThrow('绑定不一致：executablePath, runId, dataDir, pipePath');
   });
 
   it('removes stale state but preserves a mismatched live-process state', async () => {

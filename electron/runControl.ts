@@ -26,18 +26,29 @@ export function parseWorkboardRunArgs(argv: string[]): Partial<Pick<WorkboardRun
 export function startRunControlServer(pipePath: string, runId: string, requestQuit: () => void) {
   const server = net.createServer((socket) => {
     let input = '';
+    let handled = false;
     socket.setEncoding('utf8');
-    socket.on('data', (chunk) => { input += chunk; });
-    socket.on('end', () => {
+    socket.on('error', () => { /* client disconnects are contained per connection */ });
+    socket.on('data', (chunk) => {
+      if (handled) return;
+      input += chunk;
+      if (input.length > 4_096) {
+        handled = true;
+        socket.end('{"accepted":false}\n');
+        return;
+      }
+      const frameEnd = input.indexOf('\n');
+      if (frameEnd < 0) return;
+      handled = true;
       try {
-        const request = JSON.parse(input);
+        const request = JSON.parse(input.slice(0, frameEnd));
         if (request?.runId !== runId || !['ping', 'stop'].includes(request?.action)) throw new Error('binding mismatch');
-        socket.end('{"accepted":true}\n');
-        if (request.action === 'stop') requestQuit();
+        socket.end('{"accepted":true}\n', () => { if (request.action === 'stop') requestQuit(); });
       } catch {
         socket.end('{"accepted":false}\n');
       }
     });
+    socket.on('end', () => { if (!handled) socket.destroy(); });
   });
   return new Promise<{ close(): Promise<void> }>((resolve, reject) => {
     server.once('error', reject);
