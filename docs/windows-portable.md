@@ -20,12 +20,16 @@ npm.cmd run verify:win-package
 始终为数据和运行状态选择源码目录之外的独立绝对路径：
 
 ```powershell
-npm.cmd run workboard:start -- --exe="F:\Portable\Codex Workboard.exe" --data-dir="F:\WorkboardData\acceptance" --state-dir="F:\WorkboardState\acceptance"
-npm.cmd run workboard:status -- --state-dir="F:\WorkboardState\acceptance"
-npm.cmd run workboard:stop -- --state-dir="F:\WorkboardState\acceptance"
+$env:WORKBOARD_EXECUTABLE_PATH = 'F:\Portable\Codex Workboard.exe'
+$env:WORKBOARD_USER_DATA_DIR = 'F:\WorkboardData\acceptance'
+$env:WORKBOARD_STATE_DIR = 'F:\WorkboardState\acceptance'
+
+npm.cmd run workboard:start
+npm.cmd run workboard:status
+npm.cmd run workboard:stop
 ```
 
-状态记录绑定运行编号、进程编号、操作系统进程创建时间、规范化可执行文件路径、数据目录和控制管道。停止先请求该实例正常退出；只有完整身份再次匹配时才会终止该确切进程树，不按进程名称批量结束。身份不匹配时会拒绝操作。
+Windows PowerShell 通过 npm `.cmd` 转发含空格的 `--exe=...` 参数并不可靠，因此规范 npm 入口使用上述三个任务专用环境变量；直接调用 `node.exe .\scripts\workboard-run-control.mjs` 时仍兼容原有显式参数，且显式参数优先。状态记录绑定运行编号、进程编号、操作系统进程创建时间、规范化可执行文件路径、数据目录和控制管道。停止先请求该实例正常退出；只有完整身份再次匹配时才会终止该确切进程树，不按进程名称批量结束。身份不匹配时会拒绝操作。
 
 默认 Windows 数据目录为 `%APPDATA%\Codex Workboard`。开发、测试和恢复演练应显式使用 `WORKBOARD_USER_DATA_DIR`，不要使用正式默认目录。数据目录包含 `taskboard.sqlite`、可能存在的 `taskboard.sqlite-wal` 与 `taskboard.sqlite-shm`，以及 `attachments`。`.runtime` 是瞬时锁目录，不属于备份。
 

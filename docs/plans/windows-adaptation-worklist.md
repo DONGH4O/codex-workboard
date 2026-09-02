@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-- 状态：`W4_AUTOMATED_PORTABLE_AND_RESTORE_PASS_PENDING_PHYSICAL_UI_AND_HUMAN_ACCEPTANCE`
+- 状态：`W4_AUDIT_PASS_USER_ACCEPTED`
 - 编制日期：2026-08-31
 - 上游仓库：https://github.com/Derekeee/codex-workboard
 - 本地工作副本：`F:\Project\workboard\source`
@@ -208,7 +208,7 @@ W0 审计修复记录（2026-08-31）：首轮独立审计发现 Electron Window
 
 ## W1：跨平台启动与 Windows 窗口适配
 
-状态：`AUDIT_PASS_PENDING_HUMAN_ACCEPTANCE`
+状态：`AUDIT_PASS_PHYSICAL_UI_PARTIAL_PENDING_SCALE_AND_ACTIVE_CODEX_CHILD_EXIT`
 
 涉及范围：`package.json`、Electron 主进程、开发启动脚本及相应测试。
 
@@ -217,7 +217,7 @@ W0 审计修复记录（2026-08-31）：首轮独立审计发现 Electron Window
 - [x] 用跨平台 Node.js 启动器替代 Unix 风格的内联环境变量语法。
 - [x] macOS 保留 `hiddenInset` 与交通灯位置；Windows 使用正常可操作的系统标题栏或明确实现窗口控制覆盖层。
 - [x] Windows 使用原生标题栏时调整页面顶部拖动层，避免遮挡窗口按钮或应用控件。
-- [ ] 验证 Windows 下窗口拖动、缩放、最小化、最大化和关闭。
+- [x] 验证 Windows 下窗口拖动、缩放、最小化、最大化和关闭。自动界面控制完成移动、尺寸调整、最小化/恢复、最大化/还原；用户确认整体物理界面通过，并以标题栏关闭按钮完成关闭。
 - [ ] 验证关闭最后一个窗口时应用、数据库和 Codex 子进程能够正常退出。
 - [x] 将通知文案从“macOS 通知”调整为平台中性描述。
 - [x] 增加真正的离线 UI 测试入口，离线测试不得启动 App Server。
@@ -238,8 +238,8 @@ W1 隔离数据补充验收记录（2026-09-02）：W4 直接目录包验收在�
 
 人工验收：
 
-- [ ] 标题栏按钮可见、可点击，窗口能正常移动和缩放。
-- [ ] 三栏布局、右侧详情面板和弹窗在常用缩放比例下无明显错位。
+- [x] 标题栏按钮可见、可点击，窗口能正常移动和缩放。用户于 2026-09-02 确认物理界面通过并使用标题栏关闭；关闭后窗口与 staging 进程树消失。
+- [ ] 三栏布局、右侧详情面板和弹窗在常用缩放比例下无明显错位。自动界面控制在当前系统缩放和调整后的窗口尺寸中打开详情与通知浮层并核对内容，用户确认本机当前物理界面整体通过；尚未切换多档显示或应用缩放，不能据此扩大为所有常用缩放比例均已验收。
 
 阶段停止与回滚边界：形成 W1 本地提交并完成自动验证后停止，不自动推送。若不接受，以后续还原提交撤销跨平台启动和窗口改动，不删除分支或重置历史。
 
@@ -352,7 +352,7 @@ W3 `read-existing` 单场景真实验收记录（2026-09-01）：固定 CLI、`C
 
 ## W4：Windows 打包、数据目录与可逆运行
 
-状态：`AUTOMATED_PORTABLE_AND_RESTORE_PASS_PENDING_PHYSICAL_UI_AND_HUMAN_ACCEPTANCE`
+状态：`AUDIT_PASS_USER_ACCEPTED`
 
 拟改造项：
 
@@ -383,13 +383,15 @@ W3 `read-existing` 单场景真实验收记录（2026-09-01）：固定 CLI、`C
 
 人工验收：
 
-- [ ] 用户在物理显示器上检查窗口、通知、审批卡和 Codex 深链接。
-- [ ] 用户确认数据目录和停用方式可接受。
-- [ ] 用户确认卸载后默认保留数据的策略以及手动清理位置。
+- [x] 用户在物理显示器上接受窗口与整体界面；通知和演示审批卡已在同一可见实例中完成自动界面呈现并由用户接受 W4 物理界面结果。真实 `codex:` 深链接打开明确不在本轮授权内，未点击，也不以本项替代 W3 的真实深链接待办。
+- [x] 用户确认数据目录和停用方式可接受。正式数据默认位于 `%APPDATA%\Codex Workboard`，开发与验收使用显式独立目录；标题栏关闭或精确绑定运行身份的 start/status/stop 均为接受的停用方式。
+- [x] 用户确认卸载后默认保留数据的策略以及手动清理位置。未来 NSIS 卸载默认不删除 `%APPDATA%\Codex Workboard`；需要清理时先备份，再由用户明确决定手动删除。本轮未安装、未卸载、未清理任何目录。
 
 W4 源码与静态目录包验收记录（2026-09-01）：Windows x64 目录包、数据闸门、运行控制、备份恢复、数据库版本和平台发布检查通过；详细证据位于外层 `reports/W4/w4-source-static-package-evidence.md`。
 
-W4 真实便携版离线自动验收记录（2026-09-02）：真实启动先后暴露并修复死 owner 数据锁不能接管、Windows 命名管道半关闭导致响应 `EPIPE`、演示与崩溃窗口缺少当前回合启动审计三类问题。失败数据、旧包和失败证据均保留，没有手工删锁、改库、换正式数据或关闭沙箱绕过。最终全量测试为 24 个文件、191 项通过；生产构建、本地发布检查和包验证通过。系统卷隔离 staging 完成两轮非空 start/status/stop、重启中断保持、数据落点和停止清理；随后完成完整备份、恢复到第二个新目录、恢复目录实包启动读回与停止。另从 staging 零参数直接启动 EXE，在不使用 source 控制器的条件下完成包内渲染、隔离数据写入和自动正常退出；验收机 source 物理存在，但进程、工作目录、资源路径与命令行均不依赖 source。源、备份和恢复目录均为 tasks 4、conversations 3、execution snapshots 2、audit events 8，附件可读，关键动作顺序有效；直接启动目录为 tasks 4、conversations 3、execution snapshots 2、audit events 6。未生成 Codex/App Server 子进程，未访问正式数据，未运行 NSIS。物理界面与用户接受仍为 `PENDING`。详细证据位于外层 `reports/W4/w4-real-portable-acceptance.md`。
+W4 真实便携版离线自动验收记录（2026-09-02）：真实启动先后暴露并修复死 owner 数据锁不能接管、Windows 命名管道半关闭导致响应 `EPIPE`、演示与崩溃窗口缺少当前回合启动审计三类问题。失败数据、旧包和失败证据均保留，没有手工删锁、改库、换正式数据或关闭沙箱绕过。最终全量测试为 24 个文件、191 项通过；生产构建、本地发布检查和包验证通过。系统卷隔离 staging 完成两轮非空 start/status/stop、重启中断保持、数据落点和停止清理；随后完成完整备份、恢复到第二个新目录、恢复目录实包启动读回与停止。另从 staging 零参数直接启动 EXE，在不使用 source 控制器的条件下完成包内渲染、隔离数据写入和自动正常退出；验收机 source 物理存在，但进程、工作目录、资源路径与命令行均不依赖 source。源、备份和恢复目录均为 tasks 4、conversations 3、execution snapshots 2、audit events 8，附件可读，关键动作顺序有效；直接启动目录为 tasks 4、conversations 3、execution snapshots 2、audit events 6。未生成 Codex/App Server 子进程，未访问正式数据，未运行 NSIS。该自动验收阶段当时的物理界面与用户接受仍为 `PENDING`；后续物理界面补充验收见下一段，当前仅数据目录/停用方式与卸载保留策略仍待接受。详细证据位于外层 `reports/W4/w4-real-portable-acceptance.md`。
+
+W4 物理界面与数据治理补充验收记录（2026-09-02）：最初按用户指定创建的 `data-ui-accepted` / `state-ui-accepted` 因 GUI 隐藏启动问题保留为失败现场；修复后使用全新的 `data-ui-visible-accepted` / `state-ui-visible-accepted` 可见实例。自动界面控制核验窗口移动、尺寸调整、最小化/恢复、最大化/还原、三列看板、项目时序、详情、通知及演示审批卡，未触发审批、深链接或真实 Codex。用户确认 W4 物理界面通过并使用标题栏关闭；关闭后窗口、staging 进程树和子进程全部消失，writer lease 清除，规范 `status` 将 process-missing 的 stale state 安全收敛为空。停止后的只读语义仍为 tasks 4、conversations 3、execution snapshots 2、audit events 6，动作 created 4 与 execution_started 2，关键顺序有效。用户随后明确接受 W4 数据目录和停用方式，并接受卸载默认保留数据与先备份后手动清理策略；该接受没有授权安装、卸载或清理。
 
 阶段停止与回滚边界：W4 只交付未安装的目录版或便携版并停止；不运行 NSIS 安装程序。代码回滚使用后续还原提交，产物和隔离数据默认保留到用户确认清理，不触碰正式 `%APPDATA%\Codex Workboard`。
 
@@ -397,7 +399,7 @@ W4 真实便携版离线自动验收记录（2026-09-02）：真实启动先后�
 
 ## W5：Windows 自动化验收与持续集成
 
-状态：`PENDING_W4_ACCEPTANCE`
+状态：`PENDING_EXPLICIT_AUTHORIZATION`
 
 拟改造项：
 
@@ -464,6 +466,6 @@ W4 真实便携版离线自动验收记录（2026-09-02）：真实启动先后�
 
 建议只确认最小的第一个动作：
 
-> 请先接受 W4 真实便携版离线自动验收结果；如需继续，请另行授权 W4 物理界面与人工接受验收。建议仅启动已审计的系统卷 staging，使用全新的 `data-ui-accepted` 与 `state-ui-accepted` 隔离目录，仅在该目录首次启动时启用 `WORKBOARD_SEED_DEMO=1`，并保持 `WORKBOARD_SKIP_CODEX_SYNC=1`、`WORKBOARD_SKIP_LEGACY_MIGRATION=1`、离线与正常沙箱。由用户在物理显示器上检查窗口移动、缩放、最小化、最大化、关闭、三栏布局、详情面板、通知和演示审批卡；检查完成后正常停止并保留全部目录与证据，不修改或复用 `data-accepted`。
+> W4 自动、物理界面和数据治理验收均已取得用户接受。下一最小动作建议单独授权 W5 源码、纯隔离自动测试和本地工作流模拟；不推送远端、不触发公开持续集成、不连接真实 Codex，也不安装或发布。
 
-物理界面授权默认不包含真实 Codex/App Server、真实会话、深链接实际打开、正式数据、登录、沙盒初始化、NSIS、安装、W5、推送、合并、Pull Request、Release 或清理。若要实际点击 `codex:` 深链接并打开 Codex，应单独明确授权。`basic-create`、`list-sync` 和 `read-existing` 已分别完成；其余 `w3:real:*` 场景继续保持禁用。
+W5 仍未获授权；上述建议也不包含真实 Codex/App Server、真实会话、深链接实际打开、正式数据、登录、沙盒初始化、NSIS、安装、推送、合并、Pull Request、Release 或清理。若要实际点击 `codex:` 深链接并打开 Codex，应单独明确授权。`basic-create`、`list-sync` 和 `read-existing` 已分别完成；其余 `w3:real:*` 场景继续保持禁用。

@@ -3,10 +3,32 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { buildLaunchBinding, probeControl, startWorkboard, statusWorkboard, stopWorkboard, validateRunBinding } from './workboard-run-control.mjs';
+import { buildLaunchBinding, probeControl, resolveRunControlOptions, startWorkboard, statusWorkboard, stopWorkboard, validateRunBinding } from './workboard-run-control.mjs';
 import { startRunControlServer } from '../electron/runControl.ts';
 
 describe('isolated Windows run control', () => {
+  it('accepts task-specific environment paths with spaces and gives explicit arguments priority', () => {
+    const env = {
+      WORKBOARD_EXECUTABLE_PATH: 'C:\\Portable Apps\\Codex Workboard.exe',
+      WORKBOARD_USER_DATA_DIR: 'C:\\Workboard Data\\accepted',
+      WORKBOARD_STATE_DIR: 'C:\\Workboard State\\accepted',
+    };
+    expect(resolveRunControlOptions([], env)).toEqual({
+      executablePath: env.WORKBOARD_EXECUTABLE_PATH,
+      dataDir: env.WORKBOARD_USER_DATA_DIR,
+      stateDir: env.WORKBOARD_STATE_DIR,
+    });
+    expect(resolveRunControlOptions([
+      '--exe=D:\\Override\\Workboard.exe',
+      '--data-dir=D:\\Override\\data',
+      '--state-dir=D:\\Override\\state',
+    ], env)).toEqual({
+      executablePath: 'D:\\Override\\Workboard.exe',
+      dataDir: 'D:\\Override\\data',
+      stateDir: 'D:\\Override\\state',
+    });
+  });
+
   it.runIf(process.platform === 'win32')('uses the production framed pipe for ping, rejection, and acknowledged stop', async () => {
     const runId = `pipe-${Date.now()}`;
     const pipePath = `\\\\.\\pipe\\codex-workboard-${runId}`;
@@ -51,6 +73,16 @@ describe('isolated Windows run control', () => {
     info.commandLine = `--workboard-run-id=${binding.runId} --workboard-data-dir=${binding.data} --workboard-control-pipe=${binding.pipePath}`;
     const runtime = { spawn: vi.fn(() => ({ pid: 4242, unref: vi.fn() })), queryProcess: vi.fn(async () => live ? info : null), probeReady: vi.fn(), requestStop: vi.fn(async () => { live = false; }) };
     const started = await startWorkboard(binding, runtime);
+    expect(runtime.spawn).toHaveBeenCalledWith(binding.executable, [
+      `--workboard-run-id=${binding.runId}`,
+      `--workboard-data-dir=${binding.data}`,
+      `--workboard-control-pipe=${binding.pipePath}`,
+    ], expect.objectContaining({
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+      env: expect.objectContaining({ WORKBOARD_USER_DATA_DIR: binding.data, WORKBOARD_SKIP_LEGACY_MIGRATION: '1' }),
+    }));
     expect(JSON.parse(readFileSync(path.join(stateDir, 'workboard-run.json'), 'utf8'))).toMatchObject({ pid: 4242, runId: binding.runId, version: 1 });
     expect(await statusWorkboard(stateDir, runtime)).toMatchObject({ running: true });
     expect(await stopWorkboard(stateDir, runtime)).toMatchObject({ stopped: true, alreadyStopped: false });

@@ -122,7 +122,7 @@ export async function startWorkboard(binding, runtime = {}) {
     }
     const child = (runtime.spawn ?? spawn)(binding.executable, [
       `--workboard-run-id=${binding.runId}`, `--workboard-data-dir=${binding.data}`, `--workboard-control-pipe=${binding.pipePath}`,
-    ], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, WORKBOARD_USER_DATA_DIR: binding.data, WORKBOARD_SKIP_LEGACY_MIGRATION: '1' } });
+    ], { detached: true, stdio: 'ignore', windowsHide: false, env: { ...process.env, WORKBOARD_USER_DATA_DIR: binding.data, WORKBOARD_SKIP_LEGACY_MIGRATION: '1' } });
     if (!Number.isSafeInteger(child.pid) || child.pid <= 0) throw new Error('Workboard 进程未返回有效 PID');
     child.unref?.();
     let candidateState;
@@ -222,12 +222,21 @@ export async function stopWorkboard(stateDir, runtime = {}) {
   return { stopped: true, alreadyStopped: false };
 }
 
-export async function main(argv = process.argv.slice(2)) {
-  const [command, ...args] = argv;
+export function resolveRunControlOptions(args, env = process.env) {
   const get = (name) => args.find((item) => item.startsWith(`--${name}=`))?.slice(name.length + 3);
-  const result = command === 'start' ? await startWorkboard(buildLaunchBinding(get('exe'), get('data-dir'), get('state-dir')))
-    : command === 'status' ? await statusWorkboard(get('state-dir'))
-      : command === 'stop' ? await stopWorkboard(get('state-dir')) : (() => { throw new Error('仅支持 start、status 或 stop'); })();
+  return {
+    executablePath: get('exe') ?? env.WORKBOARD_EXECUTABLE_PATH,
+    dataDir: get('data-dir') ?? env.WORKBOARD_USER_DATA_DIR,
+    stateDir: get('state-dir') ?? env.WORKBOARD_STATE_DIR,
+  };
+}
+
+export async function main(argv = process.argv.slice(2), env = process.env) {
+  const [command, ...args] = argv;
+  const options = resolveRunControlOptions(args, env);
+  const result = command === 'start' ? await startWorkboard(buildLaunchBinding(options.executablePath, options.dataDir, options.stateDir))
+    : command === 'status' ? await statusWorkboard(options.stateDir)
+      : command === 'stop' ? await stopWorkboard(options.stateDir) : (() => { throw new Error('仅支持 start、status 或 stop'); })();
   process.stdout.write(`${JSON.stringify({ result: 'PASS', command, ...result }, null, 2)}\n`);
 }
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
