@@ -13,6 +13,7 @@ import { acquireDataAccess, type DataAccessLease } from './dataAccessGate.js';
 import { createShutdownBarrier } from './shutdownBarrier.js';
 import { parseWorkboardRunArgs, startRunControlServer } from './runControl.js';
 import { saveDemoExecution } from './demoSeed.js';
+import { isQaUiHarnessEnabled, validateQaBridgeEvent, validateQaWindowProfile } from './qaUiHarness.js';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const runControl = parseWorkboardRunArgs(process.argv.slice(1));
@@ -27,6 +28,16 @@ let dataAccessLease: DataAccessLease | null = null;
 let runControlServer: { close(): Promise<void> } | null = null;
 let mainWindow: BrowserWindow | null = null;
 let migratedTaskCount = 0;
+let qaUiHarnessEnabled = false;
+const qaUiCounters = {
+  injectedEvents: 0,
+  approvalDecisions: { accept: 0, acceptForSession: 0, decline: 0, cancel: 0 },
+  userInputAnswers: 0,
+  userInputCancels: 0,
+  steerActions: 0,
+  handoffInterrupts: 0,
+  deepLinkFailures: 0,
+};
 const turnTasks = new Map<string, string>();
 const pendingThreadTasks = new Map<string, string>();
 const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
@@ -185,9 +196,26 @@ function registerIpc(): void {
       codex: { ...bridge.status(), ...(error ? { error } : {}) },
     };
   });
-  ipcMain.handle('threads:list', async () => store.syncConversations(await bridge.listThreads()));
-  ipcMain.handle('threads:read', (_event, threadId: string) => bridge.readThread(threadId));
-  ipcMain.handle('models:list', () => bridge.listModels());
+  ipcMain.handle('threads:list', async () => qaUiHarnessEnabled ? store.listConversations() : store.syncConversations(await bridge.listThreads()));
+  ipcMain.handle('threads:read', (_event, threadId: string) => qaUiHarnessEnabled
+    ? { ...(store.listConversations().find((thread) => thread.id === threadId) ?? { id: threadId }), turns: [] }
+    : bridge.readThread(threadId));
+  ipcMain.handle('models:list', () => qaUiHarnessEnabled ? [{
+    id: 'qa-model',
+    model: 'qa-model',
+    displayName: '隔离 QA 模型',
+    description: '不连接 Codex 的目录包界面测试模型',
+    isDefault: true,
+    defaultReasoningEffort: 'medium',
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low', description: '低' },
+      { reasoningEffort: 'medium', description: '中' },
+      { reasoningEffort: 'high', description: '高' },
+      { reasoningEffort: 'xhigh', description: '超高' },
+    ],
+    serviceTiers: [{ id: 'standard', name: '标准', description: '隔离 QA' }, { id: 'fast', name: 'Fast', description: '隔离 QA' }],
+    defaultServiceTier: 'standard',
+  }] : bridge.listModels());
   ipcMain.handle('attachments:pick-images', async () => {
     const options = {
       title: '选择要发送给 Codex 的截图',
@@ -277,6 +305,11 @@ function registerIpc(): void {
     if (snapshot.status !== 'running') throw new Error('当前没有可引导的执行回合');
     const images = normalizeTurnImages(input.images);
     if (!input.text?.trim() && !images.length) throw new Error('请输入引导内容或添加截图');
+    if (qaUiHarnessEnabled) {
+      qaUiCounters.steerActions += 1;
+      store.recordExecutionGuidance(task.id, input.turnId, input.text?.trim() || `已补充 ${images.length} 张截图`);
+      return { result: { turnId: input.turnId }, snapshot: store.getExecutionSnapshot(task.id), task: store.get(task.id) };
+    }
     try {
       const result = await bridge.steerTurn({ threadId: input.threadId, turnId: input.turnId, text: input.text ?? '', images });
       if (result.turnId !== input.turnId) throw new Error('Codex 返回了不匹配的执行回合');
@@ -290,23 +323,39 @@ function registerIpc(): void {
   ipcMain.handle('execution:approval:respond', (_event, input: { taskId: string; requestId: RequestId; decision: ApprovalDecision }) => {
     const snapshot = store.getExecutionSnapshot(input.taskId);
     if (!snapshot?.pendingApproval || snapshot.pendingApproval.requestId !== input.requestId) throw new Error('审批请求已失效');
+    if (qaUiHarnessEnabled) {
+      qaUiCounters.approvalDecisions[input.decision] += 1;
+      handleBridgeEvent({ method: 'workboard/serverRequestResponseSubmitted', requestId: input.requestId, params: { requestId: input.requestId, method: snapshot.pendingApproval.method, threadId: snapshot.threadId, turnId: snapshot.turnId ?? '' } });
+      handleBridgeEvent({ method: 'serverRequest/resolved', requestId: input.requestId, params: { requestId: input.requestId, threadId: snapshot.threadId, turnId: snapshot.turnId ?? '' } });
+      return store.getExecutionSnapshot(input.taskId);
+    }
     bridge.respondToApproval(input.requestId, input.decision);
     return store.getExecutionSnapshot(input.taskId);
   });
   ipcMain.handle('execution:user-input:respond', (_event, input: { taskId: string; requestId: RequestId; answers: Record<string, { answers: string[] }> }) => {
     const snapshot = store.getExecutionSnapshot(input.taskId);
     if (!snapshot?.pendingUserInput || snapshot.pendingUserInput.requestId !== input.requestId) throw new Error('用户输入请求已失效');
+    if (qaUiHarnessEnabled) {
+      qaUiCounters.userInputAnswers += 1;
+      handleBridgeEvent({ method: 'workboard/serverRequestClosed', requestId: input.requestId, params: { requestId: input.requestId, reason: 'answered', threadId: snapshot.threadId, turnId: snapshot.turnId ?? '' } });
+      return store.getExecutionSnapshot(input.taskId);
+    }
     bridge.respondToUserInput(input.requestId, input.answers);
     return store.getExecutionSnapshot(input.taskId);
   });
   ipcMain.handle('execution:user-input:cancel', (_event, input: { taskId: string; requestId: RequestId }) => {
     const snapshot = store.getExecutionSnapshot(input.taskId);
     if (!snapshot?.pendingUserInput || snapshot.pendingUserInput.requestId !== input.requestId) throw new Error('用户输入请求已失效');
+    if (qaUiHarnessEnabled) {
+      qaUiCounters.userInputCancels += 1;
+      handleBridgeEvent({ method: 'workboard/serverRequestClosed', requestId: input.requestId, params: { requestId: input.requestId, reason: 'cancelled', threadId: snapshot.threadId, turnId: snapshot.turnId ?? '' } });
+      return store.getExecutionSnapshot(input.taskId);
+    }
     bridge.cancelUserInput(input.requestId);
     return store.getExecutionSnapshot(input.taskId);
   });
   ipcMain.handle('threads:open', async (_event, threadId: string) => {
-    return openCodexThread(threadId, (url) => shell.openExternal(url), (text) => clipboard.writeText(text));
+    return openThreadInCodex(threadId);
   });
   ipcMain.handle('threads:handoff-to-codex', async (_event, input: { taskId: string; threadId: string }) => {
     const task = store.get(input.taskId);
@@ -314,15 +363,16 @@ function registerIpc(): void {
     const snapshot = store.getExecutionSnapshot(task.id);
     const live = snapshot && snapshot.threadId === input.threadId && snapshot.turnId && (snapshot.status === 'running' || snapshot.status === 'waiting_approval' || snapshot.status === 'waiting_input');
     if (live && snapshot.turnId) {
-      await bridge.interruptTurn(input.threadId, snapshot.turnId);
+      if (qaUiHarnessEnabled) qaUiCounters.handoffInterrupts += 1;
+      else await bridge.interruptTurn(input.threadId, snapshot.turnId);
       const now = new Date().toISOString();
       const interrupted = store.saveExecutionSnapshot({ ...snapshot, status: 'interrupted', pendingApproval: null, pendingUserInput: null, completedAt: now, updatedAt: now, error: '已由用户转到 Codex 继续' });
       const updatedTask = store.markExecutionFinished(task.id, 'interrupted', snapshot.turnId);
       store.recordConversationHandoff(task.id, input.threadId);
       publishExecution(interrupted, updatedTask);
     }
-    await bridge.unsubscribeThread(input.threadId);
-    const openResult = await openCodexThread(input.threadId, (url) => shell.openExternal(url), (text) => clipboard.writeText(text));
+    if (!qaUiHarnessEnabled) await bridge.unsubscribeThread(input.threadId);
+    const openResult = await openThreadInCodex(input.threadId);
     return { task: store.get(task.id), interrupted: Boolean(live), openResult };
   });
   ipcMain.handle('threads:update-meta', (_event, threadId: string, input: { category?: string; tags?: string[]; note?: string }) =>
@@ -438,6 +488,27 @@ function registerIpc(): void {
   });
   ipcMain.handle('tasks:daily-maintenance', () => store.runDailyMaintenance());
   ipcMain.handle('tasks:archive-completed', () => store.archiveCompletedTasks());
+  if (qaUiHarnessEnabled) {
+    ipcMain.handle('qa:execution:inject', (_event, input: unknown) => {
+      const event = validateQaBridgeEvent(input);
+      qaUiCounters.injectedEvents += 1;
+      handleBridgeEvent(event);
+      const threadId = typeof event.params.threadId === 'string' ? event.params.threadId : '';
+      return threadId ? store.findRunnableTaskByThreadId(threadId) : null;
+    });
+    ipcMain.handle('qa:window:apply', (_event, input: unknown) => {
+      const profile = validateQaWindowProfile(input);
+      if (!mainWindow || mainWindow.isDestroyed()) throw new Error('QA 主窗口不可用');
+      mainWindow.setSize(profile.width, profile.height);
+      mainWindow.webContents.setZoomFactor(profile.zoomFactor);
+      return profile;
+    });
+    ipcMain.handle('qa:stats', () => ({
+      ...qaUiCounters,
+      approvalDecisions: { ...qaUiCounters.approvalDecisions },
+      codexConnected: bridge.status().connected,
+    }));
+  }
 }
 
 app.whenReady().then(async () => {
@@ -450,6 +521,7 @@ app.whenReady().then(async () => {
     throw error;
   }
   store.expireLiveExecutions();
+  qaUiHarnessEnabled = isQaUiHarnessEnabled({ env: process.env, userData: app.getPath('userData'), isPackaged: app.isPackaged });
   bridge.onEvent(handleBridgeEvent);
   migratedTaskCount = process.env.WORKBOARD_SKIP_LEGACY_MIGRATION === '1'
     ? 0
@@ -572,6 +644,16 @@ async function closeApplicationResources(): Promise<void> {
   try { dataAccessLease?.release(); } catch (error) { cleanupError ??= error; }
   dataAccessLease = null;
   if (cleanupError) throw cleanupError;
+}
+
+async function openThreadInCodex(threadId: string) {
+  if (!qaUiHarnessEnabled) return openCodexThread(threadId, (url) => shell.openExternal(url), (text) => clipboard.writeText(text));
+  qaUiCounters.deepLinkFailures += 1;
+  return openCodexThread(
+    threadId,
+    async () => { throw new Error('QA 模拟深链接不可用'); },
+    (text) => clipboard.writeText(text),
+  );
 }
 
 const handleBeforeQuit = createShutdownBarrier(closeApplicationResources, () => app.exit(0));

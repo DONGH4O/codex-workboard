@@ -27,6 +27,7 @@ jobs:
       - run: npm run pack:win
       - run: npm run verify:win-package
       - run: npm run test:ui:packaged
+      - run: npm run test:ui:governed
       - uses: actions/upload-artifact@v4
         with:
           name: Codex-Workboard-Windows-x64
@@ -49,6 +50,7 @@ jobs:
       - run: npm run audit:security
       - run: npm run pack:mac
       - run: npm run test:ui:packaged
+      - run: npm run test:ui:governed
       - uses: actions/upload-artifact@v4
         with:
           name: Codex-Workboard-macOS-${{ runner.arch }}

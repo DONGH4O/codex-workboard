@@ -52,6 +52,7 @@ export function verifyCiPolicy(rawSource, pkg) {
     ['单元测试与构建验证', /npm run ci:verify/],
     ['依赖安全审计', /npm run audit:security/],
     ['打包版离线 UI', /npm run test:ui:packaged/],
+    ['受控目录包 UI', /npm run test:ui:governed/],
     ['产物上传', /uses:\s+actions\/upload-artifact@v4/],
   ];
   requirePatterns(windows, 'Windows 作业', [['Windows 运行器', /runs-on:\s+windows-latest/], ...common, ['Windows 目录包', /npm run pack:win/], ['Windows 包验证', /npm run verify:win-package/]], failures);

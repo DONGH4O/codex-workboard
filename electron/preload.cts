@@ -32,4 +32,9 @@ contextBridge.exposeInMainWorld('codexTaskboard', {
   aiReviewTask: (id: string, input: unknown) => ipcRenderer.invoke('tasks:ai-review', id, input),
   runDailyMaintenance: () => ipcRenderer.invoke('tasks:daily-maintenance'),
   archiveCompletedTasks: () => ipcRenderer.invoke('tasks:archive-completed'),
+  qa: process.env.WORKBOARD_QA_UI_HARNESS === '1' ? {
+    injectExecutionEvent: (input: unknown) => ipcRenderer.invoke('qa:execution:inject', input),
+    applyWindowProfile: (input: unknown) => ipcRenderer.invoke('qa:window:apply', input),
+    stats: () => ipcRenderer.invoke('qa:stats'),
+  } : undefined,
 });

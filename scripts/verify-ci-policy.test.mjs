@@ -31,6 +31,9 @@ describe('public CI policy', () => {
     rejected(workflow.replace('          node-version-file: .nvmrc', '          # removed node version'), 'Windows 作业 缺少`.nvmrc` Node 版本');
     const macWithoutUi = `${workflow.slice(0, macStart)}${workflow.slice(macStart).replace('      - run: npm run test:ui:packaged', '      # removed packaged UI')}`;
     rejected(macWithoutUi, 'macOS 作业 缺少打包版离线 UI');
+    rejected(workflow.replace('      - run: npm run test:ui:governed', '      # removed governed UI'), 'Windows 作业 缺少受控目录包 UI');
+    const macWithoutGovernedUi = `${workflow.slice(0, macStart)}${workflow.slice(macStart).replace('      - run: npm run test:ui:governed', '      # removed governed UI')}`;
+    rejected(macWithoutGovernedUi, 'macOS 作业 缺少受控目录包 UI');
   });
 
   it('rejects real Codex inputs in executable workflow content', () => {

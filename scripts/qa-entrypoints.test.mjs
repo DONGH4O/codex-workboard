@@ -27,6 +27,7 @@ describe('QA entrypoint boundaries', () => {
   it('keeps packaged and source launches explicit at their entrypoints', () => {
     const electron = source('qa-electron.mjs');
     const offline = source('qa-offline-ui.mjs');
+    const governed = source('qa-governed-ui.mjs');
     const formal = source('qa-formal-flow.mjs');
     expect(electron).toContain("buildIsolatedQaEnvironment({ ...process.env, ELECTRON_ENABLE_LOGGING: '1' }, userData)");
     expect(electron).toContain('cpSync(sourcePackage.packageDir, stagedPackageDir');
@@ -36,15 +37,20 @@ describe('QA entrypoint boundaries', () => {
     expect(electron).toContain('writeEvidenceAtomically(artifactPaths.WORKBOARD_QA_EVIDENCE_PATH');
     expect(offline).toContain('buildOfflineLaunchConfiguration({ packaged: packagedMode');
     expect(offline).toContain("codexCliPath: path.join(temporaryRoot, 'must-not-run-codex.exe')");
+    expect(governed).toContain("createQaTemporaryRoot('governed-ui-')");
+    expect(governed).toContain("WORKBOARD_QA_UI_HARNESS: '1'");
+    expect(governed).toContain("codexCliPath: path.join(temporaryRoot, 'must-not-run-codex.exe')");
+    expect(governed).toContain('buildOfflineLaunchConfiguration({ packaged: true');
     expect(formal).toContain('buildOfflineLaunchConfiguration({ packaged: true');
     expect(formal).toContain('waitForDevToolsPort(child, launch.devToolsDataDir');
   });
 
   it('keeps graceful close, connection close and writer lease checks in every lifecycle', () => {
-    for (const name of ['qa-electron.mjs', 'qa-offline-ui.mjs', 'qa-formal-flow.mjs']) {
+    for (const name of ['qa-electron.mjs', 'qa-offline-ui.mjs', 'qa-formal-flow.mjs', 'qa-governed-ui.mjs']) {
       const text = source(name);
-      expect(text).toContain('closeOwnedProcess(');
-      expect(text).toContain('writer lease');
+      const lifecycleText = name === 'qa-governed-ui.mjs' ? `${text}\n${source('qa-governed-session.mjs')}` : text;
+      expect(lifecycleText).toContain('closeOwnedProcess(');
+      expect(lifecycleText).toContain('writer lease');
       expect(text).toContain('canRemoveQaTemporaryData(');
     }
     expect(source('qa-formal-flow.mjs')).toContain('this.child.stdin.end()');

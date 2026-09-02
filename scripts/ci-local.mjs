@@ -12,8 +12,8 @@ const localEnvironment = {
 const corepack = process.platform === 'win32' ? 'corepack.cmd' : 'corepack';
 export function localCiCommands(platform) {
   const common = [['run', 'verify:npm'], ['test'], ['run', 'build'], ['run', 'verify:ci'], ['run', 'precommit:check']];
-  if (platform === 'win32') return [...common, ['run', 'pack:win'], ['run', 'verify:win-package'], ['run', 'test:ui:packaged']];
-  if (platform === 'darwin') return [...common, ['run', 'pack:mac'], ['run', 'test:ui:packaged']];
+  if (platform === 'win32') return [...common, ['run', 'pack:win'], ['run', 'verify:win-package'], ['run', 'test:ui:packaged'], ['run', 'test:ui:governed']];
+  if (platform === 'darwin') return [...common, ['run', 'pack:mac'], ['run', 'test:ui:packaged'], ['run', 'test:ui:governed']];
   throw new Error(`本地 CI 模拟暂不支持平台 ${platform}`);
 }
 

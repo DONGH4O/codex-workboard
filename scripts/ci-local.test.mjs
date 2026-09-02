@@ -6,6 +6,7 @@ describe('local CI simulation command selection', () => {
     const commands = localCiCommands('win32').map((args) => args.join(' '));
     expect(commands).toContain('run pack:win');
     expect(commands).toContain('run verify:win-package');
+    expect(commands).toContain('run test:ui:governed');
     expect(commands).not.toContain('run pack:mac');
   });
 
@@ -13,6 +14,7 @@ describe('local CI simulation command selection', () => {
     const commands = localCiCommands('darwin').map((args) => args.join(' '));
     expect(commands).toContain('run pack:mac');
     expect(commands).toContain('run test:ui:packaged');
+    expect(commands).toContain('run test:ui:governed');
     expect(commands).not.toContain('run verify:win-package');
     expect(() => localCiCommands('linux')).toThrow('暂不支持平台');
   });

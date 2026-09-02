@@ -232,6 +232,20 @@ export interface DesktopApi {
   aiReviewTask(id: string, input: { focus?: string }): Promise<{ task: Task; decision: 'accepted' | 'rework'; note: string; reviewThreadId: string }>;
   runDailyMaintenance(): Promise<{ created: number; stagedByLane: Record<Lane, number>; archived: number; archivedTaskIds: string[]; activeTasks: number; ranAt: string }>;
   archiveCompletedTasks(): Promise<{ archived: number; archivedTaskIds: string[]; activeTasks: number; ranAt: string }>;
+  qa?: {
+    injectExecutionEvent(input: Record<string, unknown>): Promise<Task | null>;
+    applyWindowProfile(input: { width: number; height: number; zoomFactor: number }): Promise<{ width: number; height: number; zoomFactor: number }>;
+    stats(): Promise<{
+      injectedEvents: number;
+      approvalDecisions: Record<ApprovalDecision, number>;
+      userInputAnswers: number;
+      userInputCancels: number;
+      steerActions: number;
+      handoffInterrupts: number;
+      deepLinkFailures: number;
+      codexConnected: boolean;
+    }>;
+  };
 }
 
 export interface CodexThreadOpenResult {

@@ -25,6 +25,7 @@
     "test:w3:isolated": "npm run build:main && vitest run scripts/w3-qa-safety.test.mjs scripts/qa-create-thread.test.mjs scripts/qa-live-appserver.test.mjs electron/codexBridge.lifecycle.test.ts",
     "test:ui:offline": "node scripts/qa-offline-ui.mjs",
     "test:ui:packaged": "node scripts/qa-offline-ui.mjs --packaged",
+    "test:ui:governed": "node scripts/qa-governed-ui.mjs",
     "test:ui": "node scripts/qa-electron.mjs",
     "test:flow": "node scripts/qa-formal-flow.mjs",
     "w3:real:basic-create": "npm run build:main && node scripts/qa-create-thread.mjs --execute-real --scenario=basic-create",
