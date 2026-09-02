@@ -2,7 +2,7 @@
 
 ## 支持边界
 
-Windows 目录包生成后位于 `dist/win-unpacked`。该目录包已经在系统卷隔离目录完成真实离线 start/status/stop、非空重启、备份恢复和恢复目录启动读回；物理界面与用户接受仍待单独验收。该目录包是未签名的本地构建，不是正式发行版，也不是安装程序。它不包含 Codex CLI；使用真实 Codex 功能前，必须显式设置原生可执行文件 `CODEX_CLI_PATH` 和对应 `CODEX_HOME`。当前唯一固定支持版本为 `codex-cli 0.151.0-alpha.7.2`，其他版本会被预检拒绝；仅安装 Codex 桌面应用不证明独立 Workboard 已获得可用驱动或登录状态。不要把目录包、自动测试通过或本机运行等同于 GitHub Release、正式安装或人工界面验收。
+Windows 目录包生成后位于 `dist/win-unpacked`。该目录包已经在系统卷隔离目录完成真实离线 start/status/stop、非空重启、备份恢复和恢复目录启动读回，并已从 staging 零参数直接启动，证明运行不依赖 source 控制器；验收机上的 source 物理仍存在且未删除或改名。物理界面与用户接受仍待单独验收。该目录包是未签名的本地构建，不是正式发行版，也不是安装程序。它不包含 Codex CLI；使用真实 Codex 功能前，必须显式设置原生可执行文件 `CODEX_CLI_PATH` 和对应 `CODEX_HOME`。当前唯一固定支持版本为 `codex-cli 0.151.0-alpha.7.2`，其他版本会被预检拒绝；仅安装 Codex 桌面应用不证明独立 Workboard 已获得可用驱动或登录状态。不要把目录包、自动测试通过或本机运行等同于 GitHub Release、正式安装或人工界面验收。
 
 NSIS 配置已经存在，但 `dist:win` 不属于目录包验收命令。卸载配置默认保留 Workboard 用户数据。
 
