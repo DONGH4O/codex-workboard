@@ -24,6 +24,7 @@
     "test:w2:preflight": "npm run build:main && node scripts/qa-w2-preflight.mjs",
     "test:w3:isolated": "npm run build:main && vitest run scripts/w3-qa-safety.test.mjs scripts/qa-create-thread.test.mjs scripts/qa-live-appserver.test.mjs electron/codexBridge.lifecycle.test.ts",
     "test:ui:offline": "node scripts/qa-offline-ui.mjs",
+    "test:ui:packaged": "node scripts/qa-offline-ui.mjs --packaged",
     "test:ui": "node scripts/qa-electron.mjs",
     "test:flow": "node scripts/qa-formal-flow.mjs",
     "w3:real:basic-create": "npm run build:main && node scripts/qa-create-thread.mjs --execute-real --scenario=basic-create",
@@ -45,6 +46,11 @@
     "dist:mac": "npm run build && electron-builder --mac dmg zip --publish never",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
     "verify:win-package": "node scripts/verify-windows-package.mjs",
+    "verify:npm": "node scripts/verify-npm-version.mjs",
+    "verify:ci": "node scripts/verify-ci-policy.mjs",
+    "precommit:check": "node scripts/release-check.mjs",
+    "ci:verify": "npm test && npm run build && npm run verify:ci && npm run precommit:check",
+    "ci:local": "node scripts/ci-local.mjs",
     "data:backup": "npm run build:main && node scripts/workboard-data.mjs backup",
     "data:restore": "npm run build:main && node scripts/workboard-data.mjs restore",
     "workboard:start": "npm run build:main && node scripts/workboard-run-control.mjs start",
@@ -79,6 +85,7 @@
   "build": {
     "appId": "com.codexworkboard.desktop",
     "productName": "Codex Workboard",
+    "electronDist": "node_modules/electron/dist",
     "asar": true,
     "files": [
       "dist-electron/**/*.js",

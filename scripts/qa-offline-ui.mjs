@@ -1,36 +1,19 @@
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
-import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
+import { cpSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import electronExecutable from 'electron';
+import { assertWriterLeaseReleased, buildIsolatedQaEnvironment, buildOfflineLaunchConfiguration, canRemoveQaTemporaryData, closeOwnedProcess, combinePrimaryAndCleanupError, createQaTemporaryRoot, resolvePackagedExecutable, runCleanupActions, trackChild, waitForDevToolsPort, waitForTrackedExit } from './qa-runtime.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
-const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'codex-workboard-offline-'));
-const userData = path.join(temporaryRoot, 'user-data');
+let temporaryRoot;
+let userData;
+const packagedMode = process.argv.includes('--packaged');
 let child;
-let childExit;
+let trackedChild;
 let socket;
 let output = '';
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const debug = (message) => { if (process.env.WORKBOARD_QA_DEBUG === '1') console.error(`[offline-qa] ${message}`); };
-
-async function availablePort() {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      if (!address || typeof address === 'string') {
-        server.close();
-        reject(new Error('无法分配 Electron 调试端口'));
-        return;
-      }
-      server.close((error) => error ? reject(error) : resolve(address.port));
-    });
-  });
-}
 
 async function waitForPage(port) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -84,30 +67,39 @@ async function connect(page) {
 }
 
 async function run() {
-  debug('reserving-port');
-  const port = await availablePort();
-  debug(`port-${port}`);
-  // Electron's GPU sandbox cannot start from this device's non-system project volume.
-  // This switch is limited to the disposable offline QA process; packaged-app QA runs separately.
-  child = spawn(electronExecutable, [`--remote-debugging-port=${port}`, '--remote-allow-origins=*', '--disable-gpu', '--disable-software-rasterizer', '--no-sandbox', '.'], {
-    cwd: root,
-    env: {
-      ...process.env,
-      CODEX_CLI_PATH: path.join(temporaryRoot, 'must-not-run-codex.exe'),
-      WORKBOARD_USER_DATA_DIR: userData,
-      WORKBOARD_SEED_DEMO: '1',
-      WORKBOARD_SKIP_LEGACY_MIGRATION: '1',
-      WORKBOARD_SKIP_CODEX_SYNC: '1',
-    },
+  temporaryRoot = createQaTemporaryRoot('offline-');
+  userData = path.join(temporaryRoot, 'user-data');
+  let launchExecutable;
+  if (packagedMode) {
+    const sourcePackage = resolvePackagedExecutable(root, { packageDir: process.env.WORKBOARD_PACKAGE_DIR });
+    let stagedPackageDir;
+    if (sourcePackage.platform === 'win32') {
+      stagedPackageDir = path.join(temporaryRoot, 'package');
+      cpSync(sourcePackage.packageDir, stagedPackageDir, { recursive: true, errorOnExist: true });
+    } else {
+      stagedPackageDir = path.join(temporaryRoot, path.basename(sourcePackage.packageDir));
+      cpSync(sourcePackage.packageDir, stagedPackageDir, { recursive: true, errorOnExist: true });
+    }
+    const staged = resolvePackagedExecutable(root, { platform: sourcePackage.platform, arch: sourcePackage.arch, packageDir: stagedPackageDir });
+    launchExecutable = staged.executable;
+  } else {
+    launchExecutable = (await import('electron')).default;
+  }
+  const launch = buildOfflineLaunchConfiguration({ packaged: packagedMode, executable: launchExecutable, checkoutRoot: root, userData });
+  // The launch builder limits this device's source-only GPU/sandbox workaround to source mode.
+  child = spawn(launch.executable, launch.args, {
+    cwd: launch.cwd,
+    env: buildIsolatedQaEnvironment({ ...process.env, ELECTRON_ENABLE_LOGGING: '1' }, userData, { codexCliPath: path.join(temporaryRoot, 'must-not-run-codex.exe') }),
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
+    detached: process.platform !== 'win32',
   });
+  trackedChild = trackChild(child, { ownsProcessGroup: process.platform !== 'win32' });
+  const portPromise = waitForDevToolsPort(child, launch.devToolsDataDir, { timeoutMs: 30_000 });
   child.stdout.on('data', (chunk) => { output = `${output}${chunk}`.slice(-4000); });
   child.stderr.on('data', (chunk) => { output = `${output}${chunk}`.slice(-4000); });
-  childExit = new Promise((resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', (code, signal) => resolve({ code, signal }));
-  });
+  const port = await portPromise;
+  debug(`port-${port}`);
 
   debug('waiting-page');
   const page = await waitForPage(port);
@@ -151,13 +143,15 @@ async function run() {
 
   void request('Page.close').catch(() => undefined);
   debug('last-window-close-sent');
-  const exited = await Promise.race([childExit, sleep(10000).then(() => null)]);
+  const exited = await waitForTrackedExit(trackedChild, 10_000);
   if (!exited) throw new Error('关闭最后一个窗口后 Electron 未退出');
+  if (exited.code !== 0) throw new Error(`Electron 非正常退出：${exited.code ?? exited.signal ?? 'unknown'}`);
   const dataFiles = readdirSync(userData, { recursive: true }).map(String);
   if (!dataFiles.some((file) => file.endsWith('taskboard.sqlite'))) throw new Error('隔离数据目录中未生成任务数据库');
 
-  console.log(JSON.stringify({
+  return {
     ok: true,
+    mode: packagedMode ? 'packaged' : 'source',
     platform: process.platform,
     platformClass: result.platformClass,
     dragDisplay: result.dragDisplay,
@@ -168,23 +162,31 @@ async function run() {
     demoLoaded: result.demoLoaded,
     isolatedData: true,
     electronExitCode: exited.code,
-  }, null, 2));
+  };
 }
 
-let failure;
+let result;
+let primaryError;
 try {
-  await run();
+  result = await run();
 } catch (error) {
-  failure = error;
+  primaryError = error instanceof Error ? error : new Error(String(error));
 } finally {
-  socket?.close();
-  if (child && child.exitCode === null && child.signalCode === null) child.kill();
-  if (childExit) await Promise.race([childExit.catch(() => null), sleep(5000)]);
-  try {
-    rmSync(temporaryRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  } catch (cleanupError) {
-    if (!failure) failure = cleanupError;
-    else console.error(`临时目录清理失败：${cleanupError.message}`);
+  const cleanupErrors = await runCleanupActions([
+    ['Electron 进程退出', async () => {
+      if (!trackedChild || child.exitCode !== null || child.signalCode !== null) return;
+      const closed = await closeOwnedProcess(trackedChild, { graceful: () => child.kill('SIGTERM') });
+      if (closed.forced || closed.gracefulError) throw new Error('Electron 未通过无错误的正常关闭路径退出');
+    }],
+    ['CDP 连接关闭', async () => socket?.close()],
+    ['writer lease 释放', async () => { if (userData) assertWriterLeaseReleased(userData); }],
+  ]);
+  if (canRemoveQaTemporaryData(primaryError, cleanupErrors)) {
+    cleanupErrors.push(...await runCleanupActions([
+      ['临时目录清理', async () => rmSync(temporaryRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })],
+    ]));
   }
+  const finalError = combinePrimaryAndCleanupError(primaryError, cleanupErrors);
+  if (finalError) throw finalError;
 }
-if (failure) throw failure;
+console.log(JSON.stringify(result, null, 2));

@@ -1,37 +1,32 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { assertWriterLeaseReleased, buildIsolatedQaEnvironment, buildOfflineLaunchConfiguration, canRemoveQaTemporaryData, closeOwnedProcess, combinePrimaryAndCleanupError, createQaTemporaryRoot, preflightEvidenceTarget, resolveExternalArtifactPath, resolvePackagedExecutable, runCleanupActions, trackChild, waitForDevToolsPort, writeEvidenceAtomically } from './qa-runtime.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
-function resolvePackagedExecutable() {
-  for (const directoryName of ['mac-arm64', 'mac', 'mac-universal']) {
-    const directory = path.join(root, 'dist', directoryName);
-    let entries = [];
-    try {
-      entries = readdirSync(directory, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory() || !entry.name.endsWith('.app')) continue;
-      const product = entry.name.slice(0, -4);
-      return path.join(directory, entry.name, 'Contents', 'MacOS', product);
-    }
-  }
-  throw new Error('未找到 macOS 打包应用；请先运行 npm run pack');
-}
-const executable = resolvePackagedExecutable();
-const userData = mkdtempSync(path.join(tmpdir(), 'codex-workboard-ui-qa-'));
-const port = 9339;
-const child = spawn(executable, [`--remote-debugging-port=${port}`], {
-  env: { ...process.env, WORKBOARD_USER_DATA_DIR: userData, WORKBOARD_SEED_DEMO: '1', WORKBOARD_SKIP_LEGACY_MIGRATION: '1', WORKBOARD_SKIP_CODEX_SYNC: '1' },
-  stdio: 'ignore',
-});
+const sourcePackage = resolvePackagedExecutable(root, { packageDir: process.env.WORKBOARD_PACKAGE_DIR });
+const artifactPaths = Object.fromEntries([
+  'WORKBOARD_QA_CAPTURE_PATH',
+  'WORKBOARD_QA_NOTIFICATION_CAPTURE_PATH',
+  'WORKBOARD_QA_CREATE_CAPTURE_PATH',
+  'WORKBOARD_QA_BATCH_CAPTURE_PATH',
+  'WORKBOARD_QA_THREAD_CAPTURE_PATH',
+  'WORKBOARD_QA_EVIDENCE_PATH',
+].map((name) => {
+  const target = resolveExternalArtifactPath(process.env[name], root, name);
+  if (target) preflightEvidenceTarget(target);
+  return [name, target];
+}));
+let temporaryRoot;
+let userData;
+let child;
+let trackedChild;
+let socket;
+let output = '';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function waitForPage() {
+async function waitForPage(port) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     try {
       const pages = await fetch(`http://127.0.0.1:${port}/json`).then((response) => response.json());
@@ -46,8 +41,28 @@ async function waitForPage() {
 }
 
 async function run() {
-  const page = await waitForPage();
-  const socket = new WebSocket(page.webSocketDebuggerUrl);
+  temporaryRoot = createQaTemporaryRoot('ui-');
+  userData = path.join(temporaryRoot, 'user-data');
+  const stagedPackageDir = sourcePackage.platform === 'win32'
+    ? path.join(temporaryRoot, 'package')
+    : path.join(temporaryRoot, path.basename(sourcePackage.packageDir));
+  cpSync(sourcePackage.packageDir, stagedPackageDir, { recursive: true, errorOnExist: true });
+  const executable = resolvePackagedExecutable(root, { platform: sourcePackage.platform, arch: sourcePackage.arch, packageDir: stagedPackageDir }).executable;
+  const launch = buildOfflineLaunchConfiguration({ packaged: true, executable, checkoutRoot: root, userData });
+  child = spawn(launch.executable, launch.args, {
+    cwd: launch.cwd,
+    env: buildIsolatedQaEnvironment({ ...process.env, ELECTRON_ENABLE_LOGGING: '1' }, userData),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+    detached: process.platform !== 'win32',
+  });
+  trackedChild = trackChild(child, { ownsProcessGroup: process.platform !== 'win32' });
+  const portPromise = waitForDevToolsPort(child, launch.devToolsDataDir, { timeoutMs: 30_000 });
+  child.stdout.on('data', (chunk) => { output = `${output}${chunk}`.slice(-4000); });
+  child.stderr.on('data', (chunk) => { output = `${output}${chunk}`.slice(-4000); });
+  const port = await portPromise;
+  const page = await waitForPage(port);
+  socket = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
     socket.addEventListener('open', resolve, { once: true });
     socket.addEventListener('error', reject, { once: true });
@@ -118,7 +133,7 @@ async function run() {
       composerDisabled: document.querySelector('.execution-composer textarea')?.disabled ?? false,
     };
   })()`);
-  if (process.env.WORKBOARD_QA_CAPTURE_PATH) {
+  if (artifactPaths.WORKBOARD_QA_CAPTURE_PATH) {
     const screenshot = await new Promise((resolve, reject) => {
       const requestId = ++id;
       pending.set(requestId, (message) => {
@@ -127,7 +142,7 @@ async function run() {
       });
       socket.send(JSON.stringify({ id: requestId, method: 'Page.captureScreenshot', params: { format: 'png', fromSurface: true } }));
     });
-    writeFileSync(process.env.WORKBOARD_QA_CAPTURE_PATH, Buffer.from(screenshot, 'base64'));
+    writeFileSync(artifactPaths.WORKBOARD_QA_CAPTURE_PATH, Buffer.from(screenshot, 'base64'));
   }
   await evaluate(`Array.from(document.querySelectorAll('.panel-tabs button')).find((button) => button.textContent.includes('关联对话'))?.click()`);
   await waitUntil(`Boolean(document.querySelector('.thread-pane'))`, '关联对话面板');
@@ -195,7 +210,7 @@ async function run() {
       menuRole: popover?.getAttribute('role') ?? '',
     };
   })()`);
-  if (process.env.WORKBOARD_QA_NOTIFICATION_CAPTURE_PATH) {
+  if (artifactPaths.WORKBOARD_QA_NOTIFICATION_CAPTURE_PATH) {
     const screenshot = await new Promise((resolve, reject) => {
       const requestId = ++id;
       pending.set(requestId, (message) => {
@@ -204,7 +219,7 @@ async function run() {
       });
       socket.send(JSON.stringify({ id: requestId, method: 'Page.captureScreenshot', params: { format: 'png', fromSurface: true } }));
     });
-    writeFileSync(process.env.WORKBOARD_QA_NOTIFICATION_CAPTURE_PATH, Buffer.from(screenshot, 'base64'));
+    writeFileSync(artifactPaths.WORKBOARD_QA_NOTIFICATION_CAPTURE_PATH, Buffer.from(screenshot, 'base64'));
   }
   await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
   await sleep(120);
@@ -247,7 +262,7 @@ async function run() {
       permissionOptions: Array.from(selects[3]?.options ?? []).map((option) => option.textContent.trim()),
     };
   })()`);
-  if (process.env.WORKBOARD_QA_CREATE_CAPTURE_PATH) {
+  if (artifactPaths.WORKBOARD_QA_CREATE_CAPTURE_PATH) {
     const screenshot = await new Promise((resolve, reject) => {
       const requestId = ++id;
       pending.set(requestId, (message) => {
@@ -256,7 +271,7 @@ async function run() {
       });
       socket.send(JSON.stringify({ id: requestId, method: 'Page.captureScreenshot', params: { format: 'png', fromSurface: true } }));
     });
-    writeFileSync(process.env.WORKBOARD_QA_CREATE_CAPTURE_PATH, Buffer.from(screenshot, 'base64'));
+    writeFileSync(artifactPaths.WORKBOARD_QA_CREATE_CAPTURE_PATH, Buffer.from(screenshot, 'base64'));
   }
   await evaluate(`Array.from(document.querySelectorAll('.conversation-mode button')).find((button) => button.textContent.includes('仅创建任务'))?.click()`);
   const createTaskOnlyCheck = await evaluate(`({
@@ -329,7 +344,7 @@ async function run() {
     const bar = document.querySelector('.board-selection-bar');
     return { defaultHidden: ${JSON.stringify(true)}, selected: document.querySelectorAll('.task-select-checkbox:checked').length, text: bar?.innerText ?? '', visible: Boolean(bar), selectedStyle: document.querySelectorAll('.task-card.is-selected').length };
   })()`);
-  if (process.env.WORKBOARD_QA_BATCH_CAPTURE_PATH) {
+  if (artifactPaths.WORKBOARD_QA_BATCH_CAPTURE_PATH) {
     const screenshot = await new Promise((resolve, reject) => {
       const requestId = ++id;
       pending.set(requestId, (message) => {
@@ -338,7 +353,7 @@ async function run() {
       });
       socket.send(JSON.stringify({ id: requestId, method: 'Page.captureScreenshot', params: { format: 'png', fromSurface: true } }));
     });
-    writeFileSync(process.env.WORKBOARD_QA_BATCH_CAPTURE_PATH, Buffer.from(screenshot, 'base64'));
+    writeFileSync(artifactPaths.WORKBOARD_QA_BATCH_CAPTURE_PATH, Buffer.from(screenshot, 'base64'));
   }
   await evaluate(`Array.from(document.querySelectorAll('.batch-stage-actions button')).find((button) => button.textContent.trim() === '执行')?.click()`);
   await waitUntil(`window.codexTaskboard.bootstrap().then((state) => (${JSON.stringify(reviewSeed.batchMoveIds)}).every((id) => state.tasks.some((task) => task.id === id && task.lane === 'execution')))`, '批量迁移到执行');
@@ -656,7 +671,7 @@ async function run() {
       shortcutHint: composer?.textContent.includes('⌘ Enter 发送') ?? false,
     };
   })()`);
-  if (process.env.WORKBOARD_QA_THREAD_CAPTURE_PATH) {
+  if (artifactPaths.WORKBOARD_QA_THREAD_CAPTURE_PATH) {
     const screenshot = await new Promise((resolve, reject) => {
       const requestId = ++id;
       pending.set(requestId, (message) => {
@@ -665,7 +680,7 @@ async function run() {
       });
       socket.send(JSON.stringify({ id: requestId, method: 'Page.captureScreenshot', params: { format: 'png', fromSurface: true } }));
     });
-    writeFileSync(process.env.WORKBOARD_QA_THREAD_CAPTURE_PATH, Buffer.from(screenshot, 'base64'));
+    writeFileSync(artifactPaths.WORKBOARD_QA_THREAD_CAPTURE_PATH, Buffer.from(screenshot, 'base64'));
   }
   await evaluate(`Array.from(document.querySelectorAll('.panel-tabs button')).find((button) => button.textContent.trim() === '任务')?.click()`);
   await evaluate(`(() => {
@@ -757,14 +772,14 @@ async function run() {
     archiveBefore: ${JSON.stringify(archiveBefore)},
     archiveAfter: ${JSON.stringify(archiveAfter)}
   })`);
-  socket.close();
   return result;
 }
 
+let finalResult;
+let primaryError;
 try {
   const result = await run();
-  if (process.env.WORKBOARD_QA_EVIDENCE_PATH) writeFileSync(process.env.WORKBOARD_QA_EVIDENCE_PATH, JSON.stringify(result, null, 2));
-  console.log(JSON.stringify(result));
+  finalResult = result;
   const checks = [
     ['实时执行面板', result.liveExecutionCheck.panelVisible && result.liveExecutionCheck.tabs.join('|') === '任务|实时执行|关联对话' && result.liveExecutionCheck.activeTab.includes('实时执行')],
     ['当前回合引导与截图入口', result.steerUiCheck.taskOpened && result.steerUiCheck.textareaEnabled && result.steerUiCheck.placeholder.includes('粘贴截图') && result.steerUiCheck.steerMode.includes('引导当前回合') && result.steerUiCheck.steerHeight === 22 && result.steerUiCheck.steerFontSize === '9px' && result.steerUiCheck.steerWhiteSpace === 'nowrap' && result.steerUiCheck.attachmentVisible && result.steerUiCheck.attachmentEnabled && result.steerUiCheck.sendInitiallyDisabled && result.steerUiCheck.settingsDisabled && result.steerUiCheck.title.includes('引导当前回合')],
@@ -789,11 +804,32 @@ try {
   ];
   const failed = checks.filter(([, passed]) => !passed).map(([label]) => label);
   if (failed.length) {
-    console.error(`UI QA 未通过：${failed.join('、')}`);
-    process.exitCode = 1;
+    throw new Error(`UI QA 未通过：${failed.join('、')}`);
   }
+} catch (error) {
+  primaryError = error instanceof Error ? error : new Error(String(error));
 } finally {
-  child.kill('SIGTERM');
-  await sleep(250);
-  rmSync(userData, { recursive: true, force: true });
+  const cleanupErrors = await runCleanupActions([
+    ['Electron 进程退出', async () => {
+      if (!trackedChild) return;
+      const closed = await closeOwnedProcess(trackedChild, {
+        graceful: async () => {
+          if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ id: 999999, method: 'Page.close' }));
+          else child.kill('SIGTERM');
+        },
+      });
+      if (closed.forced || closed.gracefulError) throw new Error('Electron 未通过无错误的正常关闭路径退出');
+    }],
+    ['CDP 连接关闭', async () => socket?.close()],
+    ['writer lease 释放', async () => { if (userData) assertWriterLeaseReleased(userData); }],
+  ]);
+  if (canRemoveQaTemporaryData(primaryError, cleanupErrors)) {
+    cleanupErrors.push(...await runCleanupActions([
+      ['隔离数据目录清理', async () => rmSync(temporaryRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })],
+    ]));
+  }
+  const finalError = combinePrimaryAndCleanupError(primaryError, cleanupErrors);
+  if (finalError) throw finalError;
 }
+if (artifactPaths.WORKBOARD_QA_EVIDENCE_PATH) writeEvidenceAtomically(artifactPaths.WORKBOARD_QA_EVIDENCE_PATH, `${JSON.stringify(finalResult, null, 2)}\n`);
+console.log(JSON.stringify(finalResult));

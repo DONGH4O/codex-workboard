@@ -1,18 +1,42 @@
 import { spawn } from 'node:child_process';
-import { createServer } from 'node:net';
 import { createInterface } from 'node:readline';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolveCodexExecutable } from '../dist-electron/codexBridge.js';
+import {
+  assertWindowsSystemPackage,
+  assertWriterLeaseReleased,
+  buildFormalAppEnvironment,
+  buildOfflineLaunchConfiguration,
+  buildMinimalFormalEvidence,
+  canRemoveQaTemporaryData,
+  closeOwnedProcess,
+  combinePrimaryAndCleanupError,
+  resolveExternalArtifactPath,
+  resolvePackagedExecutable,
+  runCleanupActions,
+  trackChild,
+  validateFormalFlowGate,
+  waitForDevToolsPort,
+  preflightEvidenceTarget,
+  writeEvidenceAtomically,
+} from './qa-runtime.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const keepUserData = process.argv.includes('--keep-user-data');
-const userHome = mkdtempSync(path.join(tmpdir(), 'codex-workboard-formal-flow-'));
-const isolatedUserData = path.join(userHome, 'user-data');
-const codexHome = process.env.CODEX_HOME || path.join(homedir(), '.codex');
+validateFormalFlowGate(process.argv.slice(2), process.env, { platform: process.platform });
+const evidencePath = resolveExternalArtifactPath(process.env.WORKBOARD_QA_EVIDENCE_PATH, root, 'WORKBOARD_QA_EVIDENCE_PATH');
+if (!evidencePath) throw new Error('正式流程必须显式提供源码目录外的 WORKBOARD_QA_EVIDENCE_PATH');
+preflightEvidenceTarget(evidencePath);
+const packagedApplication = resolvePackagedExecutable(root, { packageDir: process.env.WORKBOARD_PACKAGE_DIR });
+assertWindowsSystemPackage(packagedApplication.packageDir, process.env);
+const validatedEnvironment = buildFormalAppEnvironment(process.env, path.join(tmpdir(), 'codex-workboard-formal-validation-only'));
+const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'codex-workboard-formal-flow-'));
+const isolatedUserData = path.join(temporaryRoot, 'user-data');
+const formalEnvironment = { ...validatedEnvironment, WORKBOARD_USER_DATA_DIR: isolatedUserData };
+const codexHome = formalEnvironment.CODEX_HOME;
 const runId = new Date().toISOString().replaceAll(/[-:.TZ]/g, '').slice(0, 14);
-const evidencePath = path.join(import.meta.dirname, 'qa-formal-flow-evidence.json');
 const taskTitle = `正式流程测试 ${runId}`;
 const manualCategory = `流程验证-${runId.slice(-6)}`;
 const executor = 'Subagent-执行';
@@ -34,7 +58,7 @@ const result = {
   runId,
   package: null,
   isolation: {
-    home: userHome,
+    temporaryRoot,
     userData: isolatedUserData,
     codexHome,
     demoSeed: true,
@@ -58,26 +82,7 @@ function assert(condition, message, details) {
 }
 
 function resolveExecutable() {
-  const architectures = ['mac-arm64', 'mac', 'mac-universal'];
-  const candidates = [];
-  for (const architecture of architectures) {
-    const directory = path.join(root, 'dist', architecture);
-    let entries = [];
-    try {
-      entries = readdirSync(directory, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory() || !entry.name.endsWith('.app')) continue;
-      const product = entry.name.slice(0, -4);
-      candidates.push(path.join(directory, entry.name, 'Contents', 'MacOS', product));
-    }
-  }
-  const preferred = candidates.find((candidate) => candidate.endsWith('/Codex Workboard'));
-  if (preferred) return preferred;
-  if (candidates[0]) return candidates[0];
-  throw new Error('未找到正式打包应用；请先运行 npm run pack');
+  return packagedApplication.executable;
 }
 
 function resolveCodex() {
@@ -89,9 +94,12 @@ class AppServerClient {
     this.nextId = 1;
     this.pending = new Map();
     this.child = spawn(executable, ['app-server', '--listen', 'stdio://'], {
-      env: { ...process.env, CODEX_HOME: codexHome },
+      env: formalEnvironment,
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      detached: process.platform !== 'win32',
     });
+    this.tracked = trackChild(this.child, { ownsProcessGroup: process.platform !== 'win32' });
     this.stderr = '';
     this.child.stderr.on('data', (chunk) => {
       this.stderr = `${this.stderr}${chunk.toString('utf8')}`.slice(-2000);
@@ -168,21 +176,14 @@ class AppServerClient {
     return { threads, pages };
   }
 
-  stop() {
-    this.child.kill('SIGTERM');
+  async stop() {
+    return closeOwnedProcess(this.tracked, {
+      graceful: () => {
+        if (!this.child.stdin.destroyed) this.child.stdin.end();
+        else this.child.kill('SIGTERM');
+      },
+    });
   }
-}
-
-async function getFreePort() {
-  const server = createServer();
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : 0;
-  await new Promise((resolve) => server.close(resolve));
-  return port;
 }
 
 async function waitForPage(port) {
@@ -276,7 +277,9 @@ async function run() {
 
   const baselineClient = new AppServerClient(resolveCodex());
   let child;
+  let trackedChild;
   let cdp;
+  let primaryError;
   try {
     await baselineClient.initialize();
     const [active, archived] = await Promise.all([baselineClient.list(false), baselineClient.list(true)]);
@@ -289,25 +292,23 @@ async function run() {
       sourceKinds: allSourceKinds,
     };
     assert(baselineIds.size > 0, '官方 App Server 未返回任何对话');
-    baselineClient.stop();
+    await baselineClient.stop();
 
-    const port = await getFreePort();
-    child = spawn(executable, [`--remote-debugging-port=${port}`], {
-      env: {
-        ...process.env,
-        HOME: userHome,
-        CODEX_HOME: codexHome,
-        WORKBOARD_USER_DATA_DIR: isolatedUserData,
-        WORKBOARD_SEED_DEMO: '1',
-        WORKBOARD_SKIP_LEGACY_MIGRATION: '1',
-        TASKBOARD_SEED_DEMO: '1',
-      },
+    const launch = buildOfflineLaunchConfiguration({ packaged: true, executable, checkoutRoot: root, userData: isolatedUserData });
+    child = spawn(launch.executable, launch.args, {
+      cwd: launch.cwd,
+      env: formalEnvironment,
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+      detached: process.platform !== 'win32',
     });
+    trackedChild = trackChild(child, { ownsProcessGroup: process.platform !== 'win32' });
+    const portPromise = waitForDevToolsPort(child, launch.devToolsDataDir, { timeoutMs: 30_000 });
     let appStderr = '';
     child.stderr.on('data', (chunk) => {
       appStderr = `${appStderr}${chunk.toString('utf8')}`.slice(-4000);
     });
+    const port = await portPromise;
 
     const page = await waitForPage(port);
     cdp = await connectCdp(page);
@@ -424,26 +425,54 @@ async function run() {
     result.ok = Object.values(result.checks).every(Boolean);
     assert(result.ok, '存在未通过的业务流程检查', result.checks);
   } catch (error) {
-    result.error = {
-      message: error instanceof Error ? error.message : String(error),
-      details: error?.details,
-    };
-    throw error;
-  } finally {
-    baselineClient.stop();
-    cdp?.socket.close();
-    if (child && !child.killed) child.kill('SIGTERM');
-    await sleep(400);
+    result.error = { present: true };
+    primaryError = error instanceof Error ? error : new Error(String(error));
   }
+  const cleanupErrors = await runCleanupActions([
+    ['App Server 退出', async () => {
+      const closed = await baselineClient.stop();
+      if (closed.forced || closed.gracefulError) throw new Error('App Server 未通过无错误的正常关闭路径退出');
+    }],
+    ['Electron 进程退出', async () => {
+      if (!trackedChild) return;
+      const closed = await closeOwnedProcess(trackedChild, {
+        graceful: async () => {
+          if (cdp?.socket.readyState === WebSocket.OPEN) await cdp.command('Page.close');
+          else child.kill('SIGTERM');
+        },
+      });
+      if (closed.forced || closed.gracefulError) throw new Error('Electron 未通过无错误的正常关闭路径退出');
+    }],
+    ['CDP 连接关闭', async () => cdp?.socket.close()],
+    ['writer lease 释放', async () => assertWriterLeaseReleased(isolatedUserData)],
+  ]);
+  result.cleanupFailed = cleanupErrors.length > 0;
+  const finalError = combinePrimaryAndCleanupError(primaryError, cleanupErrors);
+  if (finalError) throw finalError;
+  return result;
 }
 
+let primaryError;
+let cleanupFailed = false;
 try {
   await run();
-} catch {
-  process.exitCode = 1;
+} catch (error) {
+  primaryError = error instanceof Error ? error : new Error(String(error));
+  result.ok = false;
+  result.error = { present: true };
+  cleanupFailed = Boolean(result.cleanupFailed);
 } finally {
-  const serialized = JSON.stringify(result, null, 2);
-  writeFileSync(evidencePath, `${serialized}\n`, 'utf8');
+  const cleanupErrors = await runCleanupActions([
+    ['writer lease 最终复核', async () => assertWriterLeaseReleased(isolatedUserData)],
+  ]);
+  if (!keepUserData && !cleanupFailed && canRemoveQaTemporaryData(primaryError, cleanupErrors)) {
+    cleanupErrors.push(...await runCleanupActions([
+      ['正式流程临时目录清理', async () => rmSync(temporaryRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })],
+    ]));
+  }
+  const finalError = combinePrimaryAndCleanupError(primaryError, cleanupErrors);
+  const serialized = JSON.stringify(buildMinimalFormalEvidence(result, cleanupErrors), null, 2);
+  writeEvidenceAtomically(evidencePath, `${serialized}\n`);
   console.log(serialized);
-  if (!keepUserData) rmSync(userHome, { recursive: true, force: true });
+  if (finalError) throw finalError;
 }
