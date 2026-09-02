@@ -439,7 +439,7 @@ W5 本地实施记录（2026-09-02）：跨平台 QA 运行时、正式流程双
 
 ## W6：用户验收、安装与发布选择
 
-状态：`PENDING_W5_INDEPENDENT_REVIEW`
+状态：`PENDING_W5_REMOTE_CI_AND_USER_ACCEPTANCE`
 
 用户验收范围：
 
@@ -468,6 +468,6 @@ W5 本地实施记录（2026-09-02）：跨平台 QA 运行时、正式流程双
 
 建议只确认最小的第一个动作：
 
-> W4 自动、物理界面和数据治理验收均已取得用户接受。下一最小动作建议单独授权 W5 源码、纯隔离自动测试和本地工作流模拟；不推送远端、不触发公开持续集成、不连接真实 Codex，也不安装或发布。
+> W5 源码、纯隔离自动测试、无安装本地工作流模拟和独立审计已通过。下一最小动作建议单独授权：将 `codex/windows-support` 当前相对 `origin/codex/windows-support` 的全部本地领先提交推送到个人 Fork 同名功能分支，仅允许该功能分支的普通 push，随后只读验收由该 push 触发的 Windows 与 macOS 公开持续集成作业、日志摘要和产物清单。
 
-W5 仍未获授权；上述建议也不包含真实 Codex/App Server、真实会话、深链接实际打开、正式数据、登录、沙盒初始化、NSIS、安装、推送、合并、Pull Request、Release 或清理。若要实际点击 `codex:` 深链接并打开 Codex，应单独明确授权。`basic-create`、`list-sync` 和 `read-existing` 已分别完成；其余 `w3:real:*` 场景继续保持禁用。
+当前尚未获得上述功能分支推送授权。该建议不包含修改或推送 `main`、强推、合并、Pull Request、Release、NSIS、安装、发布、真实 Codex/App Server、真实会话、深链接实际打开、正式数据、登录、沙盒初始化、删除远端运行或清理本地证据。`basic-create`、`list-sync` 和 `read-existing` 已分别完成；其余 `w3:real:*` 场景继续保持禁用。
