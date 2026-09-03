@@ -62,7 +62,7 @@ describe('isolated Windows run control', () => {
     }
   });
 
-  it('atomically binds start, status, graceful stop and state cleanup', async () => {
+  it.runIf(process.platform === 'win32')('atomically binds start, status, graceful stop and state cleanup', async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'workboard-control-'));
     const exe = path.join(root, 'Codex Workboard.exe');
     const data = path.join(root, 'data'); const stateDir = path.join(root, 'state');
@@ -94,7 +94,7 @@ describe('isolated Windows run control', () => {
       .toThrow('绑定不一致：executablePath, runId, dataDir, pipePath');
   });
 
-  it('removes stale state but preserves a mismatched live-process state', async () => {
+  it.runIf(process.platform === 'win32')('removes stale state but preserves a mismatched live-process state', async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'workboard-control-'));
     const stateDir = path.join(root, 'state'); const { mkdirSync, writeFileSync, existsSync } = await import('node:fs'); mkdirSync(stateDir);
     const state = { version: 1, runId: '12345678', pid: 42, processCreatedAt: 'time', executablePath: 'C:\\Workboard.exe', dataDir: 'F:\\data', pipePath: '\\\\.\\pipe\\codex-workboard-12345678' };
@@ -106,7 +106,7 @@ describe('isolated Windows run control', () => {
     expect(existsSync(path.join(stateDir, 'workboard-run.json'))).toBe(true);
   });
 
-  it('uses graceful stop then revalidates before targeted tree fallback', async () => {
+  it.runIf(process.platform === 'win32')('uses graceful stop then revalidates before targeted tree fallback', async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'workboard-control-')); const stateDir = path.join(root, 'state');
     const { mkdirSync, writeFileSync, existsSync } = await import('node:fs'); mkdirSync(stateDir);
     const state = { version: 1, runId: '12345678', pid: 42, processCreatedAt: 'time', executablePath: 'C:\\Workboard.exe', dataDir: 'F:\\data', pipePath: '\\\\.\\pipe\\codex-workboard-12345678' };
@@ -121,7 +121,7 @@ describe('isolated Windows run control', () => {
     expect(existsSync(path.join(stateDir, 'workboard-run.json'))).toBe(false);
   }, 10_000);
 
-  it('kills the exact spawned child handle when startup cannot establish an OS binding', async () => {
+  it.runIf(process.platform === 'win32')('kills the exact spawned child handle when startup cannot establish an OS binding', async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'workboard-control-'));
     const exe = path.join(root, 'Codex Workboard.exe'); const data = path.join(root, 'data'); const stateDir = path.join(root, 'state');
     const { writeFileSync, existsSync } = await import('node:fs'); writeFileSync(exe, 'fake');
@@ -133,7 +133,7 @@ describe('isolated Windows run control', () => {
     expect(existsSync(path.join(stateDir, 'workboard-run.json'))).toBe(false);
   });
 
-  it('retries readiness and supports repeated status and stop after state cleanup', async () => {
+  it.runIf(process.platform === 'win32')('retries readiness and supports repeated status and stop after state cleanup', async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'workboard-control-')); const exe = path.join(root, 'Codex Workboard.exe');
     const data = path.join(root, 'data'); const stateDir = path.join(root, 'state'); const { writeFileSync } = await import('node:fs'); writeFileSync(exe, 'fake');
     const binding = buildLaunchBinding(exe, data, stateDir, '12345678-ready'); let probes = 0; let live = true;
@@ -145,7 +145,7 @@ describe('isolated Windows run control', () => {
     expect(await stopWorkboard(stateDir, runtime)).toMatchObject({ stopped: true, alreadyStopped: true });
   });
 
-  it('recovers a stale controller lock but refuses a live lock owner', async () => {
+  it.runIf(process.platform === 'win32')('recovers a stale controller lock but refuses a live lock owner', async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'workboard-control-')); const exe = path.join(root, 'Codex Workboard.exe');
     const data = path.join(root, 'data'); const stateDir = path.join(root, 'state'); const { mkdirSync, writeFileSync } = await import('node:fs'); writeFileSync(exe, 'fake'); mkdirSync(stateDir);
     mkdirSync(path.join(stateDir, 'workboard-start.lock')); writeFileSync(path.join(stateDir, 'workboard-start.lock', 'owner.json'), JSON.stringify({ pid: 999, runId: 'old', createdAt: 'time' }));
@@ -156,7 +156,7 @@ describe('isolated Windows run control', () => {
     await expect(startWorkboard({ ...binding, runId: '12345678-next' }, { queryProcess: vi.fn(async () => info) })).rejects.toThrow('启动控制器正在运行');
   });
 
-  it('preserves the startup error and clears owned files when identity changes or cleanup fails', async () => {
+  it.runIf(process.platform === 'win32')('preserves the startup error and clears owned files when identity changes or cleanup fails', async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'workboard-control-')); const exe = path.join(root, 'Codex Workboard.exe');
     const data = path.join(root, 'data'); const stateDir = path.join(root, 'state'); const { writeFileSync, existsSync } = await import('node:fs'); writeFileSync(exe, 'fake');
     const binding = buildLaunchBinding(exe, data, stateDir, '12345678-clean'); const primary = new Error('ready failed'); const child = { pid: 90, unref: vi.fn(), kill: vi.fn(() => { throw new Error('kill failed'); }) };
@@ -178,7 +178,7 @@ describe('isolated Windows run control', () => {
     expect(killTree).not.toHaveBeenCalled();
   });
 
-  it('preserves a newer run state installed while an old status detects a missing process', async () => {
+  it.runIf(process.platform === 'win32')('preserves a newer run state installed while an old status detects a missing process', async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'workboard-control-')); const stateDir = path.join(root, 'state');
     const { mkdirSync, writeFileSync, readFileSync } = await import('node:fs'); mkdirSync(stateDir);
     const oldState = { version: 1, runId: '12345678-old', pid: 42, processCreatedAt: 'old', executablePath: 'C:\\Workboard.exe', dataDir: 'F:\\old', pipePath: '\\\\.\\pipe\\codex-workboard-12345678-old' };

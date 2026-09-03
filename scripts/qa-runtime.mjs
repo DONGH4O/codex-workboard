@@ -113,15 +113,16 @@ export function resolvePackagedExecutable(checkoutRoot, options = {}) {
 export function createQaTemporaryRoot(prefix, options = {}) {
   const platform = options.platform ?? process.platform;
   const environment = options.environment ?? process.env;
+  const platformPath = platform === 'win32' ? path.win32 : path;
   let parent = tmpdir();
   if (platform === 'win32') {
     parent = environment.LOCALAPPDATA;
-    if (!parent || !path.isAbsolute(parent)) throw new Error('Windows QA 需要绝对路径 LOCALAPPDATA');
+    if (!parent || !platformPath.isAbsolute(parent)) throw new Error('Windows QA 需要绝对路径 LOCALAPPDATA');
     assertWindowsSystemPackage(parent, environment, platform);
-    parent = path.join(parent, 'CodexWorkboard-QA');
+    parent = platformPath.join(parent, 'CodexWorkboard-QA');
   }
   (options.makeDirectory ?? mkdirSync)(parent, { recursive: true });
-  return (options.makeTemporaryDirectory ?? mkdtempSync)(path.join(parent, prefix));
+  return (options.makeTemporaryDirectory ?? mkdtempSync)(platformPath.join(parent, prefix));
 }
 
 export function buildOfflineLaunchConfiguration({ packaged, executable, checkoutRoot, userData, platform = process.platform }) {
@@ -242,8 +243,8 @@ export function validateFormalFlowGate(argv, env, options = {}) {
 
 export function assertWindowsSystemPackage(packageDir, env, platform = process.platform) {
   if (platform !== 'win32') return true;
-  const systemRoot = path.parse(env.SystemRoot || env.SYSTEMROOT || '').root;
-  if (!systemRoot || path.parse(packageDir).root.toLowerCase() !== systemRoot.toLowerCase()) {
+  const systemRoot = path.win32.parse(env.SystemRoot || env.SYSTEMROOT || '').root;
+  if (!systemRoot || path.win32.parse(packageDir).root.toLowerCase() !== systemRoot.toLowerCase()) {
     throw new Error('Windows 正式流程目录包必须位于系统卷');
   }
   return true;

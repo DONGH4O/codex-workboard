@@ -2,7 +2,7 @@
 
 ## 文档状态
 
-- 状态：`W5_REMOTE_CI_CONDITIONAL_FAILURE_PENDING_FORK_ACTIONS_ENABLEMENT_AND_RETRIGGER_AUTHORIZATION`
+- 状态：`W5_REMOTE_CI_FAILURE_LOCAL_FIX_AUDIT_PASS_REPUSH_PENDING`
 - 编制日期：2026-08-31
 - 上游仓库：https://github.com/Derekeee/codex-workboard
 - 本地工作副本：`F:\Project\workboard\source`
@@ -409,7 +409,7 @@ W4 物理界面与数据治理补充验收记录（2026-09-02）：最初按用�
 
 ## W5：Windows 自动化验收与持续集成
 
-状态：`W5_REMOTE_CI_CONDITIONAL_FAILURE_PENDING_FORK_ACTIONS_ENABLEMENT_AND_RETRIGGER_AUTHORIZATION`
+状态：`W5_REMOTE_CI_FAILURE_LOCAL_FIX_AUDIT_PASS_REPUSH_PENDING`
 
 拟改造项：
 
@@ -427,8 +427,8 @@ W4 物理界面与数据治理补充验收记录（2026-09-02）：最初按用�
 - [x] 先在本地完成 W5 工作流审查和本地可执行验证，并列出准备推送的 W1 至 W5 已验收提交。
 - [x] 停止并单独请求“将列明提交和工作流推送到个人 Fork 的 `codex/windows-support`”授权；用户已明确授权，26 个列明提交已通过普通快进推送到个人 Fork 同名分支，不包含 `main`、Pull Request、Release 或上游仓库写入。
 - [x] 获得授权后普通推送功能分支；推送后本地与个人 Fork 同名分支双向差异为零，上游没有该功能分支。
-- [ ] 用户在个人 Fork 的 Actions 页面显式启用工作流后，另行授权推送一个具有实际治理内容的新提交，由新的 push 事件触发 Windows 与 macOS 作业；不得使用空提交、改写历史、强推、删除并重建分支或修改 `main` 绕过门禁。
-- [ ] 从 GitHub 读取工作流运行、日志摘要和产物清单；公开持续集成中不得包含 Codex 登录信息、真实对话或本机路径中的敏感内容。
+- [x] 用户在个人 Fork 的 Actions 页面显式启用工作流后，另行授权并普通推送一个具有实际治理内容的新提交；新的 push 事件已触发同一 `Cross-platform CI` 运行及 Windows、macOS 两项作业，没有使用空提交、改写历史、强推、删除并重建分支或修改 `main` 绕过门禁。
+- [x] 从 GitHub 只读获取该次工作流运行、失败步骤日志摘要和产物清单；公开日志未包含 Codex 登录信息、真实对话或用户本机敏感路径，两个作业均在 `ci:verify` 失败并跳过后续打包，产物数为 0。
 
 自动验收：
 
@@ -436,7 +436,7 @@ W4 物理界面与数据治理补充验收记录（2026-09-02）：最初按用�
 - [ ] macOS CI 继续通过。
 - [x] 本机 Windows 单元测试、构建、离线 Electron 测试和便携版冒烟测试通过。
 - [x] `git diff --check` 通过，提交范围不含运行数据和过程证据。
-- [ ] GitHub 上的运行确由个人 Fork 功能分支触发，且对应于已列明的远端提交；本地测试结果不能代替此项。
+- [x] GitHub 上的运行确由个人 Fork 功能分支的 push 触发，标题、分支、事件和远端提交主题与已列明的治理提交一致；该来源验证通过不代表 Windows 或 macOS 作业通过。
 
 独立复核：
 
@@ -448,6 +448,8 @@ W5 本地实施记录（2026-09-02）：跨平台 QA 运行时、正式流程双
 W5 受控目录包界面补充记录（2026-09-03）：新增默认关闭的 packaged QA 驱动和单一界面验收链，在不连接真实 Codex 或 App Server 的条件下覆盖三档窗口/应用缩放、流式执行证据、三种审批、用户输入回答/取消/超时、未知请求错误、同回合引导、正常完成、转交中断、深链接失败提示和同数据目录重启读回。早期端口、页面或 CDP 建连失败的进程登记与清理路径经过独立审计后补强，并增加完整失败链回归。最终本地模拟为 32 个测试文件、230 项测试通过，Windows 目录包验证、离线 UI 和受控 UI 均通过，两轮受控应用正常退出且 writer lease 释放。结构化证据位于外层 `reports/W5/w5-governed-ui-evidence.json`；实现与证据经持续审计复审 PASS。该记录只关闭自动化部分，不替代 W1 物理多显示缩放、W3 真实回合、真实深链接或用户接受。
 
 W5 首次远端推送与条件失败记录（2026-09-03）：用户授权后，列明的 26 个本地领先提交已通过普通快进推送到个人 Fork 的 `codex/windows-support`，推送子任务经独立审计 PASS；本地与远端同名分支随后双向差异为零，`main`、上游、Pull Request 和 Release 均未改变。推送后连续只读查询得到功能分支 push 运行数 0、当前提交检查套件数 0、仓库已登记工作流数 0，同时远端功能分支中的 `.github/workflows/ci.yml` 内容存在。依据 GitHub 官方 Fork 工作流规则，本次结论为 `CONDITIONAL_FAILURE_ACTIONS_ENABLEMENT_REQUIRED`：不是工作流代码运行失败，而是 Fork 尚未在 Actions 页面显式启用工作流，因而没有可验收的 Windows/macOS 作业、日志或产物。当前授权不允许修改该设置或制造新的触发事件；用户启用后仍需另行授权推送一个具有实际治理内容的新提交，旧 push 不得视为会自动补跑。外部报告位于 `reports/W5/w5-remote-ci-conditional-failure.md`。
+
+W5 首轮远端持续集成失败与本地修复记录（2026-09-03）：用户在个人 Fork 的 Actions 页面启用工作流后，另行授权普通推送条件失败治理提交；推送子任务经独立审计 PASS，并由该功能分支 push 建立 `Cross-platform CI` 运行。Windows 与 macOS 作业均完成检出、Node.js 配置、固定 npm 版本校验和 `npm ci`，随后在 `ci:verify` 失败；安全审计、目录打包、界面验收和产物上传均被跳过，远端产物数为 0。Windows 为 230 项测试中的 1 项失败：未授权正式流程在构建前静态加载不存在的桥接器；macOS 为 13 项失败：同一入口顺序问题，加上模拟 Windows 路径时误用宿主路径规则，以及只适用于真实 Windows 文件系统、进程与命名管道的运行控制测试在 macOS 上执行。修复后将桥接器导入移至双门禁之后，显式 Windows 语义统一使用 `path.win32`，并仅将依赖真实 Windows 宿主能力的运行控制测试限定到 Windows；纯参数和身份绑定测试继续跨平台。新增静态顺序断言后，定向 38/38、全量 230/230、构建、持续集成策略、提交前检查和 `git diff --check` 通过；沙箱外完整本地模拟的 Windows 目录包、76 文件验证、离线界面和受控界面也通过且没有连接真实 Codex。实现经独立审计 PASS，但本机结果不能替代新的远端双平台复跑。详细报告位于外层 `reports/W5/w5-remote-ci-first-run-failure.md`。
 
 停止与回滚边界：若远端工作流失败，保留失败证据并回到本地修复；修复形成后续提交，再次获得推送确认后更新功能分支。不得通过修改 `main`、强推或删除失败运行来掩盖失败。
 
@@ -485,6 +487,6 @@ W5 首次远端推送与条件失败记录（2026-09-03）：用户授权后，�
 
 建议只确认最小的第一个动作：
 
-> W5 源码、纯隔离自动测试、无安装本地工作流模拟和首次普通推送均已通过独立审计。下一最小动作是用户前往个人 Fork 的 Actions 页面显式启用工作流；启用后再单独授权把当前具有实际治理内容的本地领先提交普通推送到个人 Fork 同名功能分支，以新的 push 事件触发 Windows 与 macOS 作业，随后只读验收作业、日志摘要和产物清单元数据。
+> W5 首轮远端持续集成已由个人 Fork 功能分支 push 正确触发，但 Windows 与 macOS 均在 `ci:verify` 失败且没有产物。本地针对性修复、完整模拟和独立审计已经通过。下一最小动作建议单独授权把当前本地修复提交普通推送到个人 Fork 同名功能分支，并只读验收新 push 对应的 Windows 与 macOS 作业、日志摘要和产物清单元数据。
 
-首次功能分支推送已经完成，但 Fork 尚未显式启用 Actions，因此没有产生运行、日志或产物。当前尚未获得修改仓库 Actions 设置或推送后续触发提交的授权。该建议不包含修改或推送 `main`、强推、合并、Pull Request、Release、NSIS、安装、发布、真实 Codex/App Server、真实会话、深链接实际打开、正式数据、登录、沙盒初始化、删除远端运行或清理本地证据。`basic-create`、`list-sync` 和 `read-existing` 已分别完成；其余 `w3:real:*` 场景继续保持禁用。
+当前尚未获得推送本地修复提交或触发新运行的授权。该建议不包含修改或推送 `main`、强推、合并、Pull Request、Release、NSIS、安装、发布、真实 Codex/App Server、真实会话、深链接实际打开、正式数据、登录、沙盒初始化、删除远端运行、重跑旧运行或清理本地证据。`basic-create`、`list-sync` 和 `read-existing` 已分别完成；其余 `w3:real:*` 场景继续保持禁用。

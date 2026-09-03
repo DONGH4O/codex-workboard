@@ -20,6 +20,7 @@ describe('QA entrypoint boundaries', () => {
     expect(run.stderr).toContain('正式流程默认拒绝');
     expect(formalTemporaryDirectories()).toEqual(before);
     const text = source('qa-formal-flow.mjs');
+    expect(text.indexOf('validateFormalFlowGate(process.argv')).toBeLessThan(text.indexOf("await import('../dist-electron/codexBridge.js')"));
     expect(text.indexOf('validateFormalFlowGate(process.argv')).toBeLessThan(text.indexOf('mkdtempSync('));
     expect(text.indexOf('preflightEvidenceTarget(evidencePath)')).toBeLessThan(text.indexOf('mkdtempSync('));
   });

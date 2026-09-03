@@ -3,7 +3,6 @@ import { createInterface } from 'node:readline';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { resolveCodexExecutable } from '../dist-electron/codexBridge.js';
 import {
   assertWindowsSystemPackage,
   assertWriterLeaseReleased,
@@ -26,6 +25,7 @@ import {
 const root = path.resolve(import.meta.dirname, '..');
 const keepUserData = process.argv.includes('--keep-user-data');
 validateFormalFlowGate(process.argv.slice(2), process.env, { platform: process.platform });
+const { resolveCodexExecutable } = await import('../dist-electron/codexBridge.js');
 const evidencePath = resolveExternalArtifactPath(process.env.WORKBOARD_QA_EVIDENCE_PATH, root, 'WORKBOARD_QA_EVIDENCE_PATH');
 if (!evidencePath) throw new Error('正式流程必须显式提供源码目录外的 WORKBOARD_QA_EVIDENCE_PATH');
 preflightEvidenceTarget(evidencePath);

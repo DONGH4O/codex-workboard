@@ -18,9 +18,9 @@ export function parseWorkboardRunArgs(argv: string[]): Partial<Pick<WorkboardRun
   const pipePath = value('workboard-control-pipe');
   if (![runId, dataDir, pipePath].some(Boolean)) return {};
   if (!runId || !/^[a-zA-Z0-9-]{8,80}$/.test(runId)) throw new Error('Workboard 运行编号无效');
-  if (!dataDir || !path.isAbsolute(dataDir)) throw new Error('Workboard 运行数据目录必须是绝对路径');
+  if (!dataDir || !path.win32.isAbsolute(dataDir)) throw new Error('Workboard 运行数据目录必须是绝对路径');
   if (pipePath !== `\\\\.\\pipe\\codex-workboard-${runId}`) throw new Error('Workboard 控制管道无效');
-  return { runId, dataDir: path.resolve(dataDir), pipePath };
+  return { runId, dataDir: path.win32.normalize(dataDir), pipePath };
 }
 
 export function startRunControlServer(pipePath: string, runId: string, requestQuit: () => void) {
