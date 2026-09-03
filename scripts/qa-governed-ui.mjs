@@ -1,13 +1,15 @@
 import { spawn } from 'node:child_process';
-import { cpSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import path from 'node:path';
 import {
+  assertMacBundleRuntimeResources,
   assertWriterLeaseReleased,
   buildIsolatedQaEnvironment,
   buildOfflineLaunchConfiguration,
   canRemoveQaTemporaryData,
   closeOwnedProcess,
   combinePrimaryAndCleanupError,
+  copyPackagedDirectory,
   createQaTemporaryRoot,
   resolveExternalArtifactPath,
   resolvePackagedExecutable,
@@ -146,6 +148,13 @@ async function closeSession(session) {
 }
 
 async function openTask(session, title) {
+  const cardExpression = `Array.from(document.querySelectorAll('.task-card')).some((item) => item.textContent.includes(${JSON.stringify(title)}))`;
+  try {
+    await session.waitUntil(cardExpression, `${title} 任务卡加载`, 300);
+  } catch (error) {
+    const diagnostic = await session.evaluate(`({ readyState: document.readyState, cardCount: document.querySelectorAll('.task-card').length, boardPresent: Boolean(document.querySelector('.board')) })`);
+    throw new Error(`${error.message}：${JSON.stringify(diagnostic)}`);
+  }
   const opened = await session.evaluate(`(() => {
     document.querySelector('.modal .icon-button')?.click();
     document.querySelector('.detail-panel .panel-header > .icon-button')?.click();
@@ -164,10 +173,13 @@ async function inject(session, event) {
 async function run() {
   temporaryRoot = createQaTemporaryRoot('governed-ui-');
   userData = path.join(temporaryRoot, 'user-data');
+  assertMacBundleRuntimeResources(sourcePackage.executable, { platform: sourcePackage.platform, stage: 'source' });
   stagedPackageDir = sourcePackage.platform === 'win32'
     ? path.join(temporaryRoot, 'package')
     : path.join(temporaryRoot, path.basename(sourcePackage.packageDir));
-  cpSync(sourcePackage.packageDir, stagedPackageDir, { recursive: true, errorOnExist: true });
+  copyPackagedDirectory(sourcePackage.packageDir, stagedPackageDir);
+  const staged = resolvePackagedExecutable(root, { platform: sourcePackage.platform, arch: sourcePackage.arch, packageDir: stagedPackageDir });
+  assertMacBundleRuntimeResources(staged.executable, { platform: staged.platform, stage: 'staged' });
 
   const first = await launch();
   const layoutMatrix = [];

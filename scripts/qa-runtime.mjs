@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -123,6 +123,40 @@ export function createQaTemporaryRoot(prefix, options = {}) {
   }
   (options.makeDirectory ?? mkdirSync)(parent, { recursive: true });
   return (options.makeTemporaryDirectory ?? mkdtempSync)(platformPath.join(parent, prefix));
+}
+
+export function copyPackagedDirectory(source, destination, options = {}) {
+  if (![source, destination].every((value) => typeof value === 'string' && path.isAbsolute(value))) {
+    throw new Error('目录包复制路径必须是绝对路径');
+  }
+  (options.copy ?? cpSync)(source, destination, {
+    recursive: true,
+    errorOnExist: true,
+    verbatimSymlinks: true,
+  });
+  return destination;
+}
+
+export function assertMacBundleRuntimeResources(executable, options = {}) {
+  const platform = options.platform ?? process.platform;
+  if (platform !== 'darwin') return true;
+  const stage = options.stage;
+  if (!['source', 'staged'].includes(stage)) throw new Error('macOS 目录包资源检查必须标明 source 或 staged 阶段');
+  const platformPath = path.posix;
+  if (typeof executable !== 'string' || !platformPath.isAbsolute(executable)) throw new Error('macOS 目录包可执行文件必须是绝对路径');
+  const appRoot = platformPath.resolve(platformPath.dirname(executable), '..', '..');
+  const product = platformPath.basename(appRoot, '.app');
+  const requiredFiles = [
+    platformPath.join(appRoot, 'Contents', 'Frameworks', 'Electron Framework.framework', 'Resources', 'icudtl.dat'),
+    platformPath.join(appRoot, 'Contents', 'Frameworks', 'Electron Framework.framework', 'Electron Framework'),
+    platformPath.join(appRoot, 'Contents', 'Frameworks', `${product} Helper.app`, 'Contents', 'MacOS', `${product} Helper`),
+  ];
+  const stat = options.stat ?? statSync;
+  const missing = requiredFiles.filter((candidate) => {
+    try { return !stat(candidate).isFile(); } catch { return true; }
+  });
+  if (missing.length) throw new Error(`macOS ${stage} 目录包运行时资源不完整：${missing.map((candidate) => platformPath.relative(appRoot, candidate)).join('、')}`);
+  return true;
 }
 
 export function buildOfflineLaunchConfiguration({ packaged, executable, checkoutRoot, userData, platform = process.platform }) {

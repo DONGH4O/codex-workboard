@@ -31,7 +31,7 @@ describe('QA entrypoint boundaries', () => {
     const governed = source('qa-governed-ui.mjs');
     const formal = source('qa-formal-flow.mjs');
     expect(electron).toContain("buildIsolatedQaEnvironment({ ...process.env, ELECTRON_ENABLE_LOGGING: '1' }, userData)");
-    expect(electron).toContain('cpSync(sourcePackage.packageDir, stagedPackageDir');
+    expect(electron).toContain('copyPackagedDirectory(sourcePackage.packageDir, stagedPackageDir');
     expect(electron).toContain('buildOfflineLaunchConfiguration({ packaged: true');
     expect(electron).toContain('waitForDevToolsPort(child, launch.devToolsDataDir');
     expect(electron.indexOf('async function run()')).toBeLessThan(electron.indexOf("createQaTemporaryRoot('ui-')"));
@@ -42,6 +42,22 @@ describe('QA entrypoint boundaries', () => {
     expect(governed).toContain("WORKBOARD_QA_UI_HARNESS: '1'");
     expect(governed).toContain("codexCliPath: path.join(temporaryRoot, 'must-not-run-codex.exe')");
     expect(governed).toContain('buildOfflineLaunchConfiguration({ packaged: true');
+    expect(governed.indexOf('await session.waitUntil(cardExpression')).toBeLessThan(governed.indexOf('const opened = await session.evaluate'));
+    expect(governed).toContain('cardCount: document.querySelectorAll');
+    const assertStagingOrder = (text, launchMarker) => {
+      const run = text.slice(text.indexOf('async function run()'));
+      const sourceCheck = run.indexOf("assertMacBundleRuntimeResources(sourcePackage.executable, { platform: sourcePackage.platform, stage: 'source' })");
+      const copy = run.indexOf('copyPackagedDirectory(sourcePackage.packageDir, stagedPackageDir)');
+      const stagedCheck = run.indexOf("assertMacBundleRuntimeResources(staged.executable, { platform: staged.platform, stage: 'staged' })");
+      const launch = run.indexOf(launchMarker);
+      expect(sourceCheck).toBeGreaterThanOrEqual(0);
+      expect(sourceCheck).toBeLessThan(copy);
+      expect(copy).toBeLessThan(stagedCheck);
+      expect(stagedCheck).toBeLessThan(launch);
+    };
+    assertStagingOrder(electron, 'const launch = buildOfflineLaunchConfiguration');
+    assertStagingOrder(offline, 'const launch = buildOfflineLaunchConfiguration');
+    assertStagingOrder(governed, 'const first = await launch()');
     expect(formal).toContain('buildOfflineLaunchConfiguration({ packaged: true');
     expect(formal).toContain('waitForDevToolsPort(child, launch.devToolsDataDir');
   });

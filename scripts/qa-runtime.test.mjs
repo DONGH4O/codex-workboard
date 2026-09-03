@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  assertMacBundleRuntimeResources,
   assertWindowsSystemPackage,
   assertWriterLeaseReleased,
   buildFormalAppEnvironment,
@@ -14,6 +15,7 @@ import {
   canRemoveQaTemporaryData,
   closeOwnedProcess,
   combinePrimaryAndCleanupError,
+  copyPackagedDirectory,
   createQaTemporaryRoot,
   resolveExternalArtifactPath,
   resolvePackagedExecutable,
@@ -57,6 +59,39 @@ describe('cross-platform QA runtime', () => {
     const source = buildOfflineLaunchConfiguration({ packaged: false, executable, checkoutRoot: root, userData, platform: 'win32' });
     expect(source.args).toContain('.');
     expect(source.args).toContain('--no-sandbox');
+  });
+
+  it('stages packaged applications without rewriting bundle symlinks', () => {
+    const copy = vi.fn();
+    const source = path.resolve(process.platform === 'win32' ? 'C:\\package' : '/package');
+    const destination = path.resolve(process.platform === 'win32' ? 'C:\\staging\\package' : '/staging/package');
+    expect(copyPackagedDirectory(source, destination, { copy })).toBe(destination);
+    expect(copy).toHaveBeenCalledWith(source, destination, {
+      recursive: true,
+      errorOnExist: true,
+      verbatimSymlinks: true,
+    });
+    expect(() => copyPackagedDirectory('relative', destination, { copy })).toThrow('绝对路径');
+  });
+
+  it('distinguishes complete and incomplete macOS bundle runtime resources', () => {
+    const executable = '/staging/Codex Workboard.app/Contents/MacOS/Codex Workboard';
+    const checked = [];
+    const present = (candidate) => {
+      checked.push(candidate);
+      return { isFile: () => true };
+    };
+    expect(assertMacBundleRuntimeResources(executable, { platform: 'darwin', stage: 'source', stat: present })).toBe(true);
+    expect(checked).toEqual([
+      '/staging/Codex Workboard.app/Contents/Frameworks/Electron Framework.framework/Resources/icudtl.dat',
+      '/staging/Codex Workboard.app/Contents/Frameworks/Electron Framework.framework/Electron Framework',
+      '/staging/Codex Workboard.app/Contents/Frameworks/Codex Workboard Helper.app/Contents/MacOS/Codex Workboard Helper',
+    ]);
+    const missing = () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); };
+    expect(() => assertMacBundleRuntimeResources(executable, { platform: 'darwin', stage: 'source', stat: missing })).toThrow('macOS source 目录包运行时资源不完整');
+    expect(() => assertMacBundleRuntimeResources(executable, { platform: 'darwin', stage: 'staged', stat: missing })).toThrow('macOS staged 目录包运行时资源不完整');
+    expect(() => assertMacBundleRuntimeResources(executable, { platform: 'darwin', stat: present })).toThrow('必须标明 source 或 staged 阶段');
+    expect(assertMacBundleRuntimeResources('C:\\package\\Codex Workboard.exe', { platform: 'win32', stat: () => { throw new Error('should not run'); } })).toBe(true);
   });
 
   it('requires Windows staging to be on the system volume', () => {

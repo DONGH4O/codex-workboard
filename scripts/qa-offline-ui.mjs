@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { cpSync, readdirSync, rmSync } from 'node:fs';
+import { readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { assertWriterLeaseReleased, buildIsolatedQaEnvironment, buildOfflineLaunchConfiguration, canRemoveQaTemporaryData, closeOwnedProcess, combinePrimaryAndCleanupError, createQaTemporaryRoot, resolvePackagedExecutable, runCleanupActions, trackChild, waitForDevToolsPort, waitForTrackedExit } from './qa-runtime.mjs';
+import { assertMacBundleRuntimeResources, assertWriterLeaseReleased, buildIsolatedQaEnvironment, buildOfflineLaunchConfiguration, canRemoveQaTemporaryData, closeOwnedProcess, combinePrimaryAndCleanupError, copyPackagedDirectory, createQaTemporaryRoot, resolvePackagedExecutable, runCleanupActions, trackChild, waitForDevToolsPort, waitForTrackedExit } from './qa-runtime.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 let temporaryRoot;
@@ -72,15 +72,17 @@ async function run() {
   let launchExecutable;
   if (packagedMode) {
     const sourcePackage = resolvePackagedExecutable(root, { packageDir: process.env.WORKBOARD_PACKAGE_DIR });
+    assertMacBundleRuntimeResources(sourcePackage.executable, { platform: sourcePackage.platform, stage: 'source' });
     let stagedPackageDir;
     if (sourcePackage.platform === 'win32') {
       stagedPackageDir = path.join(temporaryRoot, 'package');
-      cpSync(sourcePackage.packageDir, stagedPackageDir, { recursive: true, errorOnExist: true });
+      copyPackagedDirectory(sourcePackage.packageDir, stagedPackageDir);
     } else {
       stagedPackageDir = path.join(temporaryRoot, path.basename(sourcePackage.packageDir));
-      cpSync(sourcePackage.packageDir, stagedPackageDir, { recursive: true, errorOnExist: true });
+      copyPackagedDirectory(sourcePackage.packageDir, stagedPackageDir);
     }
     const staged = resolvePackagedExecutable(root, { platform: sourcePackage.platform, arch: sourcePackage.arch, packageDir: stagedPackageDir });
+    assertMacBundleRuntimeResources(staged.executable, { platform: staged.platform, stage: 'staged' });
     launchExecutable = staged.executable;
   } else {
     launchExecutable = (await import('electron')).default;

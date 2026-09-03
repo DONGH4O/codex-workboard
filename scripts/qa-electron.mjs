@@ -1,7 +1,7 @@
-import { cpSync, rmSync, writeFileSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { assertWriterLeaseReleased, buildIsolatedQaEnvironment, buildOfflineLaunchConfiguration, canRemoveQaTemporaryData, closeOwnedProcess, combinePrimaryAndCleanupError, createQaTemporaryRoot, preflightEvidenceTarget, resolveExternalArtifactPath, resolvePackagedExecutable, runCleanupActions, trackChild, waitForDevToolsPort, writeEvidenceAtomically } from './qa-runtime.mjs';
+import { assertMacBundleRuntimeResources, assertWriterLeaseReleased, buildIsolatedQaEnvironment, buildOfflineLaunchConfiguration, canRemoveQaTemporaryData, closeOwnedProcess, combinePrimaryAndCleanupError, copyPackagedDirectory, createQaTemporaryRoot, preflightEvidenceTarget, resolveExternalArtifactPath, resolvePackagedExecutable, runCleanupActions, trackChild, waitForDevToolsPort, writeEvidenceAtomically } from './qa-runtime.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const sourcePackage = resolvePackagedExecutable(root, { packageDir: process.env.WORKBOARD_PACKAGE_DIR });
@@ -46,8 +46,11 @@ async function run() {
   const stagedPackageDir = sourcePackage.platform === 'win32'
     ? path.join(temporaryRoot, 'package')
     : path.join(temporaryRoot, path.basename(sourcePackage.packageDir));
-  cpSync(sourcePackage.packageDir, stagedPackageDir, { recursive: true, errorOnExist: true });
-  const executable = resolvePackagedExecutable(root, { platform: sourcePackage.platform, arch: sourcePackage.arch, packageDir: stagedPackageDir }).executable;
+  assertMacBundleRuntimeResources(sourcePackage.executable, { platform: sourcePackage.platform, stage: 'source' });
+  copyPackagedDirectory(sourcePackage.packageDir, stagedPackageDir);
+  const staged = resolvePackagedExecutable(root, { platform: sourcePackage.platform, arch: sourcePackage.arch, packageDir: stagedPackageDir });
+  assertMacBundleRuntimeResources(staged.executable, { platform: staged.platform, stage: 'staged' });
+  const executable = staged.executable;
   const launch = buildOfflineLaunchConfiguration({ packaged: true, executable, checkoutRoot: root, userData });
   child = spawn(launch.executable, launch.args, {
     cwd: launch.cwd,
