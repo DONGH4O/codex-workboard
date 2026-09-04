@@ -17,12 +17,31 @@ export function isRetryableAuditEndpointFailure(result) {
     && !VULNERABILITY_REPORT_MARKERS.some((pattern) => pattern.test(output));
 }
 
+export function buildNpmAuditInvocation(npmCliPath, options = {}) {
+  const platform = options.platform ?? process.platform;
+  const platformPath = platform === 'win32' ? path.win32 : path.posix;
+  if (typeof npmCliPath !== 'string' || !platformPath.isAbsolute(npmCliPath)) {
+    throw new Error('npm 安全审计需要由 npm script 提供绝对路径 npm_execpath。');
+  }
+  return {
+    executable: options.executable ?? process.execPath,
+    args: [npmCliPath, 'audit', '--registry=https://registry.npmjs.org', '--audit-level=high'],
+  };
+}
+
 export function runSecurityAudit(options = {}) {
-  const executable = options.executable ?? (process.platform === 'win32' ? 'npm.cmd' : 'npm');
-  const args = ['audit', '--registry=https://registry.npmjs.org', '--audit-level=high'];
-  const execute = options.execute ?? (() => spawnSync(executable, args, { encoding: 'utf8', windowsHide: true }));
+  const npmCliPath = options.npmCliPath ?? process.env.npm_execpath;
   const writeOut = options.writeOut ?? ((value) => process.stdout.write(value));
   const writeErr = options.writeErr ?? ((value) => process.stderr.write(value));
+  let invocation;
+  try {
+    invocation = buildNpmAuditInvocation(npmCliPath, options);
+  } catch (error) {
+    writeErr(`${error.message}\n`);
+    return 1;
+  }
+  const { executable, args } = invocation;
+  const execute = options.execute ?? (() => spawnSync(executable, args, { encoding: 'utf8', windowsHide: true }));
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const result = execute({ executable, args, attempt });
