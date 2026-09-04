@@ -1,7 +1,7 @@
 import { rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { assertMacBundleRuntimeResources, assertWriterLeaseReleased, buildIsolatedQaEnvironment, buildOfflineLaunchConfiguration, canRemoveQaTemporaryData, closeOwnedProcess, combinePrimaryAndCleanupError, copyPackagedDirectory, createQaTemporaryRoot, preflightEvidenceTarget, resolveExternalArtifactPath, resolvePackagedExecutable, runCleanupActions, trackChild, waitForDevToolsPort, writeEvidenceAtomically } from './qa-runtime.mjs';
+import { assertMacBundleRuntimeResources, assertWriterLeaseReleased, buildIsolatedQaEnvironment, buildOfflineLaunchConfiguration, canRemoveQaTemporaryData, closeOwnedProcess, combinePrimaryAndCleanupError, copyPackagedDirectory, createQaTemporaryRoot, preflightEvidenceTarget, qaApplicationCloseMethod, resolveExternalArtifactPath, resolvePackagedExecutable, runCleanupActions, trackChild, waitForDevToolsPort, writeEvidenceAtomically } from './qa-runtime.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const sourcePackage = resolvePackagedExecutable(root, { packageDir: process.env.WORKBOARD_PACKAGE_DIR });
@@ -817,7 +817,7 @@ try {
       if (!trackedChild) return;
       const closed = await closeOwnedProcess(trackedChild, {
         graceful: async () => {
-          if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ id: 999999, method: 'Page.close' }));
+          if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ id: 999999, method: qaApplicationCloseMethod() }));
           else child.kill('SIGTERM');
         },
       });

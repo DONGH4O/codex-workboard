@@ -71,7 +71,8 @@ describe('QA entrypoint boundaries', () => {
       expect(text).toContain('canRemoveQaTemporaryData(');
     }
     expect(source('qa-formal-flow.mjs')).toContain('this.child.stdin.end()');
-    expect(source('qa-electron.mjs')).toContain("method: 'Page.close'");
-    expect(source('qa-offline-ui.mjs')).toContain("request('Page.close')");
+    expect(source('qa-electron.mjs')).toContain('method: qaApplicationCloseMethod()');
+    expect(source('qa-offline-ui.mjs')).toContain('request(qaApplicationCloseMethod())');
+    expect(source('qa-governed-ui.mjs')).toContain('request(qaApplicationCloseMethod())');
   });
 });

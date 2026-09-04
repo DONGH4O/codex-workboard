@@ -24,6 +24,7 @@ import {
   validateFormalFlowGate,
   waitForDevToolsPort,
   preflightEvidenceTarget,
+  qaApplicationCloseMethod,
   writeEvidenceAtomically,
 } from './qa-runtime.mjs';
 
@@ -38,6 +39,12 @@ function fakeChild(pid = 42) {
 }
 
 describe('cross-platform QA runtime', () => {
+  it('uses application quit on macOS and last-window close elsewhere', () => {
+    expect(qaApplicationCloseMethod('darwin')).toBe('Browser.close');
+    expect(qaApplicationCloseMethod('win32')).toBe('Page.close');
+    expect(qaApplicationCloseMethod('linux')).toBe('Page.close');
+  });
+
   it('selects the single Windows product executable', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'workboard-qa-runtime-'));
     const packageDir = path.join(root, 'dist', 'win-unpacked');

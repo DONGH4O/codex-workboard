@@ -137,6 +137,10 @@ export function copyPackagedDirectory(source, destination, options = {}) {
   return destination;
 }
 
+export function qaApplicationCloseMethod(platform = process.platform) {
+  return platform === 'darwin' ? 'Browser.close' : 'Page.close';
+}
+
 export function assertMacBundleRuntimeResources(executable, options = {}) {
   const platform = options.platform ?? process.platform;
   if (platform !== 'darwin') return true;

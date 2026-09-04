@@ -1,4 +1,4 @@
-import { combinePrimaryAndCleanupError, runCleanupActions } from './qa-runtime.mjs';
+import { combinePrimaryAndCleanupError, qaApplicationCloseMethod, runCleanupActions } from './qa-runtime.mjs';
 
 export async function establishGovernedSession(options) {
   const { session, sessions, waitForPort, waitForPage, connectPage, closeProcess, assertLeaseReleased } = options;
@@ -21,13 +21,13 @@ export async function establishGovernedSession(options) {
 }
 
 export async function cleanupGovernedSessions(options) {
-  const { sessions, closeTrackedProcess, assertLeaseReleased } = options;
+  const { sessions, closeTrackedProcess, assertLeaseReleased, platform = process.platform } = options;
   const cleanupErrors = await runCleanupActions(sessions.map((session, index) => [
     `目录包进程 ${index + 1} 退出`,
     async () => {
       if (session.closed || session.child.exitCode !== null || session.child.signalCode !== null) return;
       const graceful = typeof session.request === 'function'
-        ? () => session.request('Page.close').catch(() => session.child.kill('SIGTERM'))
+        ? () => session.request(qaApplicationCloseMethod(platform)).catch(() => session.child.kill('SIGTERM'))
         : () => session.child.kill('SIGTERM');
       await closeTrackedProcess(session, graceful);
     },

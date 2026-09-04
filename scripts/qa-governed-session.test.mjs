@@ -98,4 +98,22 @@ describe('governed packaged UI early launch lifecycle', () => {
     expect(closeTrackedProcess).toHaveBeenCalledWith(data.session, expect.any(Function));
     expect(data.session.child.kill).toHaveBeenCalledWith('SIGTERM');
   });
+
+  it('uses whole-application quit for macOS cleanup and window close for Windows cleanup', async () => {
+    for (const [platform, expectedMethod] of [['darwin', 'Browser.close'], ['win32', 'Page.close']]) {
+      const data = fixture();
+      data.session.child = { exitCode: null, signalCode: null, kill: vi.fn() };
+      data.session.request = vi.fn(async () => undefined);
+      const closeTrackedProcess = vi.fn(async (_session, graceful) => graceful());
+      const errors = await cleanupGovernedSessions({
+        sessions: [data.session],
+        closeTrackedProcess,
+        assertLeaseReleased: data.assertLeaseReleased,
+        platform,
+      });
+      expect(errors).toEqual([]);
+      expect(data.session.request).toHaveBeenCalledWith(expectedMethod);
+      expect(data.session.child.kill).not.toHaveBeenCalled();
+    }
+  });
 });

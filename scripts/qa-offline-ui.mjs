@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { assertMacBundleRuntimeResources, assertWriterLeaseReleased, buildIsolatedQaEnvironment, buildOfflineLaunchConfiguration, canRemoveQaTemporaryData, closeOwnedProcess, combinePrimaryAndCleanupError, copyPackagedDirectory, createQaTemporaryRoot, resolvePackagedExecutable, runCleanupActions, trackChild, waitForDevToolsPort, waitForTrackedExit } from './qa-runtime.mjs';
+import { assertMacBundleRuntimeResources, assertWriterLeaseReleased, buildIsolatedQaEnvironment, buildOfflineLaunchConfiguration, canRemoveQaTemporaryData, closeOwnedProcess, combinePrimaryAndCleanupError, copyPackagedDirectory, createQaTemporaryRoot, qaApplicationCloseMethod, resolvePackagedExecutable, runCleanupActions, trackChild, waitForDevToolsPort, waitForTrackedExit } from './qa-runtime.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 let temporaryRoot;
@@ -143,10 +143,10 @@ async function run() {
   }
   if (result.connected || !result.diagnosticVisible || result.stale || !result.demoLoaded) throw new Error(`离线状态不正确：${JSON.stringify(result)}`);
 
-  void request('Page.close').catch(() => undefined);
-  debug('last-window-close-sent');
+  void request(qaApplicationCloseMethod()).catch(() => undefined);
+  debug('application-close-sent');
   const exited = await waitForTrackedExit(trackedChild, 10_000);
-  if (!exited) throw new Error('关闭最后一个窗口后 Electron 未退出');
+  if (!exited) throw new Error('请求正常关闭后 Electron 未退出');
   if (exited.code !== 0) throw new Error(`Electron 非正常退出：${exited.code ?? exited.signal ?? 'unknown'}`);
   const dataFiles = readdirSync(userData, { recursive: true }).map(String);
   if (!dataFiles.some((file) => file.endsWith('taskboard.sqlite'))) throw new Error('隔离数据目录中未生成任务数据库');

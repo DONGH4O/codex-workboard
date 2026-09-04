@@ -57,7 +57,7 @@
     "workboard:start": "npm run build:main && node scripts/workboard-run-control.mjs start",
     "workboard:status": "npm run build:main && node scripts/workboard-run-control.mjs status",
     "workboard:stop": "npm run build:main && node scripts/workboard-run-control.mjs stop",
-    "audit:security": "npm audit --registry=https://registry.npmjs.org --audit-level=high",
+    "audit:security": "node scripts/audit-security.mjs",
     "release:check": "npm test && npm run build && npm run audit:security && node scripts/release-check.mjs"
   },
   "dependencies": {

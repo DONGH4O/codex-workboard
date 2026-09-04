@@ -11,6 +11,7 @@ import {
   combinePrimaryAndCleanupError,
   copyPackagedDirectory,
   createQaTemporaryRoot,
+  qaApplicationCloseMethod,
   resolveExternalArtifactPath,
   resolvePackagedExecutable,
   runCleanupActions,
@@ -137,9 +138,9 @@ async function launch() {
 
 async function closeSession(session) {
   if (session.closed) return;
-  void session.request('Page.close').catch(() => undefined);
+  void session.request(qaApplicationCloseMethod()).catch(() => undefined);
   const exited = await waitForTrackedExit(session.tracked, 12_000);
-  if (!exited) throw new Error('关闭最后一个窗口后目录包未退出');
+  if (!exited) throw new Error('请求正常关闭后目录包未退出');
   if (exited.code !== 0) throw new Error(`目录包非正常退出：${exited.code ?? exited.signal ?? 'unknown'} ${session.output()}`);
   session.socket.close();
   session.closed = true;
