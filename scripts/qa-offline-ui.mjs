@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { assertMacBundleRuntimeResources, assertWriterLeaseReleased, buildIsolatedQaEnvironment, buildOfflineLaunchConfiguration, canRemoveQaTemporaryData, closeOwnedProcess, combinePrimaryAndCleanupError, copyPackagedDirectory, createQaTemporaryRoot, qaApplicationCloseMethod, resolvePackagedExecutable, runCleanupActions, trackChild, waitForDevToolsPort, waitForTrackedExit } from './qa-runtime.mjs';
+import { assertMacBundleRuntimeResources, assertOfflineIsolationState, assertWriterLeaseReleased, buildIsolatedQaEnvironment, buildOfflineLaunchConfiguration, canRemoveQaTemporaryData, closeQaApplicationThroughCdp, combinePrimaryAndCleanupError, copyPackagedDirectory, createQaTemporaryRoot, resolvePackagedExecutable, runCleanupActions, summarizeOfflineIsolationState, trackChild, waitForDevToolsPort } from './qa-runtime.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 let temporaryRoot;
@@ -10,6 +10,7 @@ const packagedMode = process.argv.includes('--packaged');
 let child;
 let trackedChild;
 let socket;
+let request;
 let output = '';
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -106,7 +107,7 @@ async function run() {
   debug('waiting-page');
   const page = await waitForPage(port);
   debug('connecting-websocket');
-  const request = await connect(page);
+  request = await connect(page);
   debug('waiting-ui');
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const ready = await request('Runtime.evaluate', {
@@ -128,26 +129,17 @@ async function run() {
         dragDisplay: drag ? getComputedStyle(drag).display : '',
         sidebarPaddingTop: sidebar ? getComputedStyle(sidebar).paddingTop : '',
         connected: Boolean(document.querySelector('.connection-dot.online')),
-        diagnosticVisible: ['尚未启动', '驱动版本不兼容', '需要登录', '协议不兼容', '连接错误'].some((label) => document.body.innerText.includes(label)),
-        stale: document.body.innerText.includes('Codex 缓存模式'),
-        demoLoaded: document.body.innerText.includes('在关联对话中继续执行'),
+        bodyText: document.body.innerText,
       };
     })()`,
     returnByValue: true,
   });
   debug('ui-evaluated');
-  const result = evaluated.result?.value;
-  if (!result?.platformClass.includes(`platform-${process.platform}`)) throw new Error(`平台类名不正确：${JSON.stringify(result)}`);
-  if (process.platform === 'win32' && (result.dragDisplay !== 'none' || result.sidebarPaddingTop !== '12px')) {
-    throw new Error(`Windows 标题栏布局不正确：${JSON.stringify(result)}`);
-  }
-  if (result.connected || !result.diagnosticVisible || result.stale || !result.demoLoaded) throw new Error(`离线状态不正确：${JSON.stringify(result)}`);
+  const result = summarizeOfflineIsolationState(evaluated.result?.value);
+  assertOfflineIsolationState(result, process.platform);
 
-  void request(qaApplicationCloseMethod()).catch(() => undefined);
+  const closed = await closeQaApplicationThroughCdp(trackedChild, { request, platform: process.platform });
   debug('application-close-sent');
-  const exited = await waitForTrackedExit(trackedChild, 10_000);
-  if (!exited) throw new Error('请求正常关闭后 Electron 未退出');
-  if (exited.code !== 0) throw new Error(`Electron 非正常退出：${exited.code ?? exited.signal ?? 'unknown'}`);
   const dataFiles = readdirSync(userData, { recursive: true }).map(String);
   if (!dataFiles.some((file) => file.endsWith('taskboard.sqlite'))) throw new Error('隔离数据目录中未生成任务数据库');
 
@@ -159,11 +151,12 @@ async function run() {
     dragDisplay: result.dragDisplay,
     sidebarPaddingTop: result.sidebarPaddingTop,
     connected: result.connected,
-    diagnosticVisible: result.diagnosticVisible,
+    isolationStatusVisible: result.isolationStatusVisible,
+    legacyDiagnosticVisible: result.legacyDiagnosticVisible,
     stale: result.stale,
     demoLoaded: result.demoLoaded,
     isolatedData: true,
-    electronExitCode: exited.code,
+    electronExitCode: closed.exit.code,
   };
 }
 
@@ -177,8 +170,7 @@ try {
   const cleanupErrors = await runCleanupActions([
     ['Electron 进程退出', async () => {
       if (!trackedChild || child.exitCode !== null || child.signalCode !== null) return;
-      const closed = await closeOwnedProcess(trackedChild, { graceful: () => child.kill('SIGTERM') });
-      if (closed.forced || closed.gracefulError) throw new Error('Electron 未通过无错误的正常关闭路径退出');
+      await closeQaApplicationThroughCdp(trackedChild, { request, platform: process.platform });
     }],
     ['CDP 连接关闭', async () => socket?.close()],
     ['writer lease 释放', async () => { if (userData) assertWriterLeaseReleased(userData); }],

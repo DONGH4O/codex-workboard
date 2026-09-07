@@ -66,13 +66,25 @@ describe('QA entrypoint boundaries', () => {
     for (const name of ['qa-electron.mjs', 'qa-offline-ui.mjs', 'qa-formal-flow.mjs', 'qa-governed-ui.mjs']) {
       const text = source(name);
       const lifecycleText = name === 'qa-governed-ui.mjs' ? `${text}\n${source('qa-governed-session.mjs')}` : text;
-      expect(lifecycleText).toContain('closeOwnedProcess(');
+      expect(lifecycleText).toContain(name === 'qa-offline-ui.mjs' ? 'closeQaApplicationThroughCdp(' : 'closeOwnedProcess(');
       expect(lifecycleText).toContain('writer lease');
       expect(text).toContain('canRemoveQaTemporaryData(');
     }
+    const offline = source('qa-offline-ui.mjs');
+    expect(offline).toContain('summarizeOfflineIsolationState(');
+    expect(offline).toContain('assertOfflineIsolationState(');
+    expect(offline).toContain('let request;');
+    expect(offline).not.toContain("child.kill('SIGTERM')");
+    const offlineCleanup = offline.slice(offline.indexOf('} finally {'));
+    const applicationClose = offlineCleanup.indexOf('closeQaApplicationThroughCdp(');
+    const socketClose = offlineCleanup.indexOf("['CDP 连接关闭'");
+    const leaseCheck = offlineCleanup.indexOf("['writer lease 释放'");
+    expect(applicationClose).toBeGreaterThanOrEqual(0);
+    expect(applicationClose).toBeLessThan(socketClose);
+    expect(socketClose).toBeLessThan(leaseCheck);
     expect(source('qa-formal-flow.mjs')).toContain('this.child.stdin.end()');
     expect(source('qa-electron.mjs')).toContain('method: qaApplicationCloseMethod()');
-    expect(source('qa-offline-ui.mjs')).toContain('request(qaApplicationCloseMethod())');
+    expect(source('qa-offline-ui.mjs')).toContain('closeQaApplicationThroughCdp(trackedChild, { request, platform: process.platform })');
     expect(source('qa-governed-ui.mjs')).toContain('request(qaApplicationCloseMethod())');
   });
 });

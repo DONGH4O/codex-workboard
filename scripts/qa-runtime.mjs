@@ -141,6 +141,33 @@ export function qaApplicationCloseMethod(platform = process.platform) {
   return platform === 'darwin' ? 'Browser.close' : 'Page.close';
 }
 
+const LEGACY_CODEX_DIAGNOSTICS = ['尚未启动', '驱动版本不兼容', '需要登录', '协议不兼容', '连接错误'];
+
+export function summarizeOfflineIsolationState(input) {
+  const bodyText = typeof input?.bodyText === 'string' ? input.bodyText : '';
+  return {
+    platformClass: typeof input?.platformClass === 'string' ? input.platformClass : '',
+    dragDisplay: typeof input?.dragDisplay === 'string' ? input.dragDisplay : '',
+    sidebarPaddingTop: typeof input?.sidebarPaddingTop === 'string' ? input.sidebarPaddingTop : '',
+    connected: input?.connected === true,
+    isolationStatusVisible: bodyText.includes('Codex 隔离验收模式') && bodyText.includes('未刷新既有会话目录'),
+    legacyDiagnosticVisible: LEGACY_CODEX_DIAGNOSTICS.some((label) => bodyText.includes(label)),
+    stale: bodyText.includes('Codex 缓存模式'),
+    demoLoaded: bodyText.includes('在关联对话中继续执行'),
+  };
+}
+
+export function assertOfflineIsolationState(result, platform = process.platform) {
+  if (!result?.platformClass.includes(`platform-${platform}`)) throw new Error(`平台类名不正确：${JSON.stringify(result)}`);
+  if (platform === 'win32' && (result.dragDisplay !== 'none' || result.sidebarPaddingTop !== '12px')) {
+    throw new Error(`Windows 标题栏布局不正确：${JSON.stringify(result)}`);
+  }
+  if (result.connected || !result.isolationStatusVisible || result.legacyDiagnosticVisible || result.stale || !result.demoLoaded) {
+    throw new Error(`离线隔离状态不正确：${JSON.stringify(result)}`);
+  }
+  return result;
+}
+
 export function assertMacBundleRuntimeResources(executable, options = {}) {
   const platform = options.platform ?? process.platform;
   if (platform !== 'darwin') return true;
@@ -199,8 +226,23 @@ export function trackChild(child, options = {}) {
   return { child, exit, ownsProcessGroup: Boolean(options.ownsProcessGroup) };
 }
 
-export async function waitForTrackedExit(tracked, timeoutMs) {
-  return Promise.race([tracked.exit, delay(timeoutMs).then(() => null)]);
+export function waitForTrackedExit(tracked, timeoutMs, options = {}) {
+  const setTimer = options.setTimer ?? setTimeout;
+  const clearTimer = options.clearTimer ?? clearTimeout;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimer(timer);
+      callback(value);
+    };
+    const timer = setTimer(() => finish(resolve, null), timeoutMs);
+    tracked.exit.then(
+      (value) => finish(resolve, value),
+      (error) => finish(reject, error),
+    );
+  });
 }
 
 function execFilePromise(file, args, implementation = execFile) {
@@ -232,6 +274,45 @@ export async function closeOwnedProcess(tracked, options = {}) {
   const forcedExit = await waitForTrackedExit(tracked, options.forceTimeoutMs ?? 5_000);
   if (!forcedExit) throw new Error(`QA 子进程 ${child.pid} 未能退出`);
   return { forced: true, exit: forcedExit, gracefulError };
+}
+
+export async function closeQaApplicationThroughCdp(tracked, options = {}) {
+  const {
+    request,
+    closeOwned = closeOwnedProcess,
+    platform = process.platform,
+    cdpRequestTimeoutMs = 5_000,
+    setTimer = setTimeout,
+    clearTimer = clearTimeout,
+    ...closeOptions
+  } = options;
+  const method = qaApplicationCloseMethod(platform);
+  const closed = await closeOwned(tracked, {
+    ...closeOptions,
+    platform,
+    graceful: async () => {
+      if (typeof request !== 'function') throw new Error('Electron CDP 关闭请求不可用');
+      let timer;
+      try {
+        await Promise.race([
+          request(method),
+          new Promise((_, reject) => {
+            timer = setTimer(() => reject(new Error('Electron CDP 关闭请求超时')), cdpRequestTimeoutMs);
+          }),
+        ]);
+      } finally {
+        if (timer !== undefined) clearTimer(timer);
+      }
+    },
+  });
+  if (closed.forced) {
+    const detail = closed.gracefulError instanceof Error ? `：${closed.gracefulError.message}` : '';
+    throw new Error(`Electron 未通过 CDP 正常关闭，已精确终止登记进程${detail}`);
+  }
+  const exit = closed.exit;
+  if (exit?.error) throw exit.error;
+  if (exit?.code !== 0) throw new Error(`Electron 非正常退出：${exit?.code ?? exit?.signal ?? 'unknown'}`);
+  return closed;
 }
 
 export function canRemoveQaTemporaryData(primaryError, cleanupErrors) {

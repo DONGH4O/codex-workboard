@@ -6,6 +6,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   assertMacBundleRuntimeResources,
+  assertOfflineIsolationState,
   assertWindowsSystemPackage,
   assertWriterLeaseReleased,
   buildFormalAppEnvironment,
@@ -14,15 +15,18 @@ import {
   buildMinimalFormalEvidence,
   canRemoveQaTemporaryData,
   closeOwnedProcess,
+  closeQaApplicationThroughCdp,
   combinePrimaryAndCleanupError,
   copyPackagedDirectory,
   createQaTemporaryRoot,
   resolveExternalArtifactPath,
   resolvePackagedExecutable,
   runCleanupActions,
+  summarizeOfflineIsolationState,
   trackChild,
   validateFormalFlowGate,
   waitForDevToolsPort,
+  waitForTrackedExit,
   preflightEvidenceTarget,
   qaApplicationCloseMethod,
   writeEvidenceAtomically,
@@ -43,6 +47,100 @@ describe('cross-platform QA runtime', () => {
     expect(qaApplicationCloseMethod('darwin')).toBe('Browser.close');
     expect(qaApplicationCloseMethod('win32')).toBe('Page.close');
     expect(qaApplicationCloseMethod('linux')).toBe('Page.close');
+  });
+
+  it('requires the exact isolated directory status instead of a legacy diagnostic', () => {
+    const base = {
+      platformClass: 'app-shell platform-win32',
+      dragDisplay: 'none',
+      sidebarPaddingTop: '12px',
+      connected: false,
+    };
+    const accepted = summarizeOfflineIsolationState({
+      ...base,
+      bodyText: 'Codex 隔离验收模式\n未刷新既有会话目录\n在关联对话中继续执行',
+    });
+    expect(assertOfflineIsolationState(accepted, 'win32')).toBe(accepted);
+    expect(accepted).toMatchObject({ isolationStatusVisible: true, legacyDiagnosticVisible: false, stale: false, demoLoaded: true });
+
+    const legacy = summarizeOfflineIsolationState({ ...base, bodyText: '尚未启动\n在关联对话中继续执行' });
+    expect(() => assertOfflineIsolationState(legacy, 'win32')).toThrow('离线隔离状态不正确');
+
+    const missing = summarizeOfflineIsolationState({ ...base, bodyText: '在关联对话中继续执行' });
+    expect(() => assertOfflineIsolationState(missing, 'win32')).toThrow('离线隔离状态不正确');
+  });
+
+  it('closes through the platform CDP method before considering a fallback', async () => {
+    const child = fakeChild(43);
+    const tracked = trackChild(child);
+    const request = vi.fn(async (method) => {
+      expect(method).toBe('Page.close');
+      child.exitCode = 0;
+      child.emit('exit', 0, null);
+    });
+    const timerToken = {};
+    const setTimer = vi.fn(() => timerToken);
+    const clearTimer = vi.fn();
+
+    await expect(closeQaApplicationThroughCdp(tracked, { request, platform: 'win32', gracefulTimeoutMs: 50, setTimer, clearTimer }))
+      .resolves.toMatchObject({ forced: false, exit: { code: 0 } });
+    expect(request).toHaveBeenCalledOnce();
+    expect(clearTimer).toHaveBeenCalledWith(timerToken);
+  });
+
+  it('preserves a CDP failure after precisely terminating the registered process', async () => {
+    const child = fakeChild(44);
+    const tracked = trackChild(child);
+    const execFile = vi.fn((_file, _args, _options, callback) => {
+      child.exitCode = 1;
+      child.emit('exit', 1, null);
+      callback(null);
+    });
+
+    await expect(closeQaApplicationThroughCdp(tracked, {
+      request: vi.fn(async () => { throw new Error('CDP unavailable'); }),
+      platform: 'win32',
+      gracefulTimeoutMs: 1,
+      execFile,
+    })).rejects.toThrow('CDP unavailable');
+    expect(execFile).toHaveBeenCalledWith('taskkill.exe', ['/PID', '44', '/T', '/F'], expect.objectContaining({ windowsHide: true }), expect.any(Function));
+  });
+
+  it('accepts a clean exit when Browser.close closes the CDP connection first', async () => {
+    const child = fakeChild(45);
+    const tracked = trackChild(child, { ownsProcessGroup: true });
+    const request = vi.fn(async (method) => {
+      expect(method).toBe('Browser.close');
+      child.exitCode = 0;
+      child.emit('exit', 0, null);
+      throw new Error('connection closed');
+    });
+    const timerToken = {};
+    const setTimer = vi.fn(() => timerToken);
+    const clearTimer = vi.fn();
+
+    await expect(closeQaApplicationThroughCdp(tracked, { request, platform: 'darwin', gracefulTimeoutMs: 50, setTimer, clearTimer }))
+      .resolves.toMatchObject({ forced: false, exit: { code: 0 }, gracefulError: expect.any(Error) });
+    expect(clearTimer).toHaveBeenCalledWith(timerToken);
+  });
+
+  it('bounds a stalled CDP request before the exact Windows fallback', async () => {
+    const child = fakeChild(46);
+    const tracked = trackChild(child);
+    const execFile = vi.fn((_file, _args, _options, callback) => {
+      child.exitCode = 1;
+      child.emit('exit', 1, null);
+      callback(null);
+    });
+
+    await expect(closeQaApplicationThroughCdp(tracked, {
+      request: vi.fn(() => new Promise(() => {})),
+      platform: 'win32',
+      cdpRequestTimeoutMs: 1,
+      gracefulTimeoutMs: 1,
+      execFile,
+    })).rejects.toThrow('CDP 关闭请求超时');
+    expect(execFile).toHaveBeenCalledOnce();
   });
 
   it('selects the single Windows product executable', () => {
@@ -204,6 +302,21 @@ describe('cross-platform QA runtime', () => {
     });
     await expect(closeOwnedProcess(forcedTracked, { platform: 'win32', graceful: vi.fn(), gracefulTimeoutMs: 1, execFile })).resolves.toMatchObject({ forced: true });
     expect(execFile).toHaveBeenCalledWith('taskkill.exe', ['/PID', '52', '/T', '/F'], expect.objectContaining({ windowsHide: true }), expect.any(Function));
+  });
+
+  it('clears the tracked-exit timeout as soon as the process settles', async () => {
+    const child = fakeChild(50);
+    const tracked = trackChild(child);
+    const timerToken = {};
+    const setTimer = vi.fn(() => timerToken);
+    const clearTimer = vi.fn();
+    const waiting = waitForTrackedExit(tracked, 10_000, { setTimer, clearTimer });
+
+    child.exitCode = 0;
+    child.emit('exit', 0, null);
+
+    await expect(waiting).resolves.toMatchObject({ code: 0 });
+    expect(clearTimer).toHaveBeenCalledWith(timerToken);
   });
 
   it('continues exact cleanup after a graceful-close error', async () => {
