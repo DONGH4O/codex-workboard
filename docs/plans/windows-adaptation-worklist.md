@@ -2,9 +2,9 @@
 
 ## 文档状态
 
-- 状态：`W6_WINDOWS_ARTIFACT_STATIC_PASS_PENDING_W1_W3_REAL_AND_USER_ACCEPTANCE`
+- 状态：`W6_ZERO_LIST_SOURCE_FIX_LOCAL_PASS_PENDING_REMOTE_CI_W1_W3_REAL_AND_USER_ACCEPTANCE`
 - 编制日期：2026-08-31
-- 最近更新：2026-09-05
+- 最近更新：2026-09-07
 - 上游仓库：https://github.com/Derekeee/codex-workboard
 - 本地工作副本：`F:\Project\workboard\source`
 - 个人 Fork：`https://github.com/DONGH4O/codex-workboard`
@@ -473,17 +473,20 @@ W5 第六轮远端持续集成成功记录（2026-09-05）：Windows 审计启�
 
 ## W6：用户验收、安装与发布选择
 
-状态：`WINDOWS_ARTIFACT_STATIC_PASS_PENDING_REAL_TASK_AND_USER_ACCEPTANCE`
+状态：`ZERO_LIST_SOURCE_FIX_LOCAL_PASS_PENDING_REMOTE_CI_NEW_ARTIFACT_REAL_TASK_AND_USER_ACCEPTANCE`
 
 用户验收范围：
 
 - [x] 第六次远端持续集成已经成功；对应 Windows x64 产物已下载到外层隔离目录并完成来源、归档清单、目录结构、文件数量和既有静态包规则核对。该项仅代表实物静态验收，不代表已经启动、安装或连接真实 Codex。
+- [x] 隔离目录同步最小源码修复及纯隔离测试完成：`WORKBOARD_SKIP_CODEX_SYNC=1` 现在同时保护启动和后续 `threads:list`，界面创建新会话任务后不会刷新既有会话目录，并明确显示隔离验收状态。该项仅代表本地源码和自动测试通过，仍需新的远端双平台持续集成与 Windows 产物验证。
 - [ ] 用户完成至少一次真实任务创建、审批、完成、验收和重启恢复。
 - [ ] 用户确认界面、数据位置、权限提示和 Codex 交互符合预期。
 - [x] 未验证能力和已知限制清单持续维护；W5 远端持续集成已经完成，没有用其成功掩盖仍待的 W1 多档缩放与活动 Codex 子进程退出、W3 剩余真实交互与深链接、W6 真实任务与用户接受，以及安装、合并、Pull Request 和 Release 独立选择。
 - [ ] 在 W6 最终用户接受前刷新一次未验证能力和已知限制清单，并把最终边界纳入交付记录。
 
 W6 Windows 远端产物静态验收记录（2026-09-05）：经用户单独授权，只下载第六次成功运行对应的 `Codex-Workboard-Windows-x64` 到外层全新隔离目录 `F:\Project\workboard\artifacts\W6\run-33941993804-windows-x64-static`，未下载 macOS 产物。解包后为 76 个文件、2 个目录，唯一应用可执行文件为 `Codex Workboard.exe`，没有 MSI、MSIX、AppX 或捆绑的 Codex CLI；`resources/app.asar` 可列举 3637 项，包含必要生产入口且不含构建后的测试或 TypeScript 声明文件。既有 Windows 包验证器返回 PASS，静态产品名称和文件描述正确。产物没有启动、安装或连接真实 Codex，正式数据未访问；独立审计 PASS。详细报告位于外层 `reports/W6/w6-windows-ci-artifact-static-validation.md`。
+
+W6 零目录读取源码修复记录（2026-09-07）：后续准备审计发现，第六次产物虽然静态合格，但创建新会话任务后界面会再次调用 `listThreads()`，主进程当时没有在该 IPC 路径检查 `WORKBOARD_SKIP_CODEX_SYNC`，因此不能满足“新建真实会话但不读取既有会话目录”的严格边界。经用户单独授权，主进程现使用统一目录加载器保护 bootstrap 与 `threads:list`；隔离模式只返回 Workboard 本地存储，普通模式继续读取并持久化 App Server 全来源目录。bootstrap 新增 `sync.skipped`，界面据此跳过创建后目录刷新并显示“Codex 隔离验收模式”和“未刷新既有会话目录”。抽取策略、生产接线、普通同步及创建条件均有纯隔离回归；定向 12 项、全量 251 项、生产构建、持续集成策略和提交前检查通过，独立审计 PASS。没有启动真实 Codex、执行或安装任何产物，也没有读取既有会话。第六次产物保持历史静态证据，不能用于替代修复后的新产物；下一步须另行授权推送并验收新的双平台持续集成。
 
 用户验收通过后仍需分别选择：
 
@@ -505,6 +508,6 @@ W6 Windows 远端产物静态验收记录（2026-09-05）：经用户单独授�
 
 建议只确认最小的第一个动作：
 
-> W6 Windows 远端产物实物与静态内容已经核对通过。建议下一步以该已下载产物开展一个受控真实执行场景：继续使用已确认的固定 Codex CLI 和 `CODEX_HOME`、全新的 Workboard 数据目录与隔离工作目录、`untrusted + workspaceWrite`，只验证流式消息、计划、无害命令输出和隔离文件变更；不安装、不使用正式数据、不测试完全访问权限，并保留最小脱敏证据。若意外出现审批或用户输入请求，不作任何响应，立即停止该单场景并保留最小脱敏失败证据，不扩大权限或继续操作。该场景仍需另行授权，后续审批、用户输入、重启和深链接继续分别授权。
+> W6 零目录读取最小源码修复、纯隔离测试和本地审计已经通过。建议下一步仅把当前本地 `codex/windows-support` 相对远端领先的提交以普通推送方式推送到个人 Fork 同名分支，并只读验收该次 push 触发的 Windows 与 macOS 作业、日志摘要和产物清单元数据。不得修改 `main`、强制推送、创建 Pull Request 或 Release，也不得下载或执行产物、连接真实 Codex、读取真实会话。
 
-当前尚未获得使用下载产物启动上述真实执行场景的授权。该建议不包含安装、完全访问权限、正式数据、既有会话读取、审批选择、用户输入回答、重启、深链接、下载 macOS 产物、修改或推送分支、合并、Pull Request、Release、删除远端运行或清理既有证据。`basic-create`、`list-sync` 和 `read-existing` 已分别完成；其余未逐项授权的 `w3:real:*` 场景继续保持禁用。
+当前尚未获得上述推送与远端持续集成验收授权。后续仍须按顺序分别授权：下载并静态核验新 Windows 产物；使用新产物开展零目录读取的真实单场景；其余审批、用户输入、重启和深链接场景。当前授权不包含推送、公开持续集成、安装、完全访问权限、正式数据、既有会话读取、审批选择、用户输入回答、重启、深链接、下载新产物、合并、Pull Request、Release、删除远端运行或清理既有证据。`basic-create`、`list-sync` 和 `read-existing` 已分别完成；其余未逐项授权的 `w3:real:*` 场景继续保持禁用。

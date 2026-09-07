@@ -54,6 +54,7 @@ import type {
   Substatus,
   Task,
 } from './types';
+import { refreshThreadsAfterTaskCreation } from './conversationSync';
 import { ConversationPanel, ConversationView } from './ConversationView';
 import { codexHandoffNotice, openCodexThreadWithNotice } from './codexOpen';
 
@@ -186,6 +187,7 @@ function App() {
     archived: 0,
     lastSyncedAt: null,
     stale: false,
+    skipped: false,
     migratedTaskCount: 0,
     archivedTaskCount: 0,
   });
@@ -396,10 +398,17 @@ function App() {
       let nextThreads = threads;
       if (input.createConversation && task.threadId) {
         try {
-          const syncedThreads = await window.codexTaskboard.listThreads();
-          nextThreads = syncedThreads;
-          setThreads(syncedThreads);
-          setCategories(Array.from(new Set(syncedThreads.map((thread) => thread.category))).sort((a, b) => a.localeCompare(b, 'zh-CN')));
+          const syncedThreads = await refreshThreadsAfterTaskCreation({
+            createConversation: input.createConversation,
+            threadId: task.threadId,
+            syncSkipped: sync.skipped,
+            listThreads: () => window.codexTaskboard.listThreads(),
+          });
+          if (syncedThreads) {
+            nextThreads = syncedThreads;
+            setThreads(syncedThreads);
+            setCategories(Array.from(new Set(syncedThreads.map((thread) => thread.category))).sort((a, b) => a.localeCompare(b, 'zh-CN')));
+          }
         } catch {
           setNotice({ tone: 'error', text: '任务和新会话已创建；对话目录将在下次刷新时显示' });
         }
@@ -416,7 +425,9 @@ function App() {
       setSelectedTaskId(task.id);
       setNotice(task.conversationLaunchError
         ? { tone: 'error', text: `任务已保留，但 Codex 会话未能启动：${task.conversationLaunchError}` }
-        : { tone: 'success', text: input.createConversation ? '任务已创建，Codex 已开始处理' : '任务已创建并已定位' });
+        : { tone: 'success', text: input.createConversation
+          ? sync.skipped ? '任务已创建，Codex 已开始处理；隔离模式未刷新既有会话目录' : '任务已创建，Codex 已开始处理'
+          : '任务已创建并已定位' });
     } catch (error) {
       setNotice({ tone: 'error', text: error instanceof Error ? error.message : String(error) });
     }
@@ -647,8 +658,8 @@ function App() {
         <div className="connection-card" title={[codex.error, codex.executablePath, codex.codexHome ? `CODEX_HOME: ${codex.codexHome}` : ''].filter(Boolean).join('\n')}>
           <span className={`connection-dot ${codex.connected && !sync.stale ? 'online' : ''}`} />
           <div>
-            <strong>{sync.stale ? `Codex 缓存模式 · ${codexStateText[codex.state]}` : codex.connected ? 'Codex 已连接' : codexStateText[codex.state]}</strong>
-            <small>{sync.stale ? `上次同步 ${sync.lastSyncedAt ? new Date(sync.lastSyncedAt).toLocaleString('zh-CN') : '未知'} · ${codex.version}` : `${codex.version}${codex.source ? ` · ${codex.source}` : ''}`}</small>
+            <strong>{sync.skipped ? 'Codex 隔离验收模式' : sync.stale ? `Codex 缓存模式 · ${codexStateText[codex.state]}` : codex.connected ? 'Codex 已连接' : codexStateText[codex.state]}</strong>
+            <small>{sync.skipped ? `未刷新既有会话目录 · ${codex.version}` : sync.stale ? `上次同步 ${sync.lastSyncedAt ? new Date(sync.lastSyncedAt).toLocaleString('zh-CN') : '未知'} · ${codex.version}` : `${codex.version}${codex.source ? ` · ${codex.source}` : ''}`}</small>
           </div>
         </div>
       </aside>
@@ -724,7 +735,7 @@ function App() {
           </section>
         ) : (
           <section className="metric-grid" aria-label="对话概览">
-            <MetricCard tone="plan" icon={MessageSquareText} label="当前对话" value={sync.active} detail={sync.stale ? '本地缓存，等待重新同步' : 'App Server 全来源同步'} />
+            <MetricCard tone="plan" icon={MessageSquareText} label="当前对话" value={sync.active} detail={sync.skipped ? '隔离模式，不刷新既有会话目录' : sync.stale ? '本地缓存，等待重新同步' : 'App Server 全来源同步'} />
             <MetricCard tone="execution" icon={LayoutDashboard} label="已关联任务" value={linkedConversations} detail="进入任务工作流" />
             <MetricCard tone="complete" icon={Archive} label="已归档" value={sync.archived} detail="历史对话可回查" />
             <MetricCard tone="risk" icon={AlertTriangle} label="待分类" value={uncategorized} detail="需要人工确认" />

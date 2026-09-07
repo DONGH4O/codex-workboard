@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CodexBridge, isThreadNotFoundError, type CodexBridgeEvent } from './codexBridge.js';
 import { openCodexThread } from './codexLink.js';
-import { loadBootstrapConversations } from './bootstrap.js';
+import { loadBootstrapConversations, loadConversationDirectory } from './bootstrap.js';
 import { emptyExecutionSnapshot, eventThreadId, eventTurnId, reduceExecutionSnapshot, type ApprovalDecision, type ExecutionPermissionPreset, type ExecutionSnapshot, type RequestId } from './executionTracker.js';
 import { browserWindowPlatformOptions, shouldQuitWhenAllWindowsClose, shouldSkipCodexSync, WINDOWS_APP_USER_MODEL_ID } from './platform.js';
 import { TaskStore, type TaskInput } from './taskStore.js';
@@ -169,7 +169,7 @@ function createWindow(): void {
 
 function registerIpc(): void {
   ipcMain.handle('app:bootstrap', async () => {
-    const { threads, error, stale } = await loadBootstrapConversations({
+    const { threads, error, stale, skipped } = await loadBootstrapConversations({
       skipCodexSync: shouldSkipCodexSync(process.env),
       loadStored: () => store.listConversations(),
       loadRemote: () => bridge.listThreads(),
@@ -190,13 +190,19 @@ function registerIpc(): void {
         archived,
         lastSyncedAt: syncState.lastCompletedAt,
         stale,
+        skipped,
         migratedTaskCount,
         archivedTaskCount: store.archivedCount(),
       },
       codex: { ...bridge.status(), ...(error ? { error } : {}) },
     };
   });
-  ipcMain.handle('threads:list', async () => qaUiHarnessEnabled ? store.listConversations() : store.syncConversations(await bridge.listThreads()));
+  ipcMain.handle('threads:list', async () => (await loadConversationDirectory({
+    skipCodexSync: qaUiHarnessEnabled || shouldSkipCodexSync(process.env),
+    loadStored: () => store.listConversations(),
+    loadRemote: () => bridge.listThreads(),
+    persistRemote: (threads) => store.syncConversations(threads),
+  })).threads);
   ipcMain.handle('threads:read', (_event, threadId: string) => qaUiHarnessEnabled
     ? { ...(store.listConversations().find((thread) => thread.id === threadId) ?? { id: threadId }), turns: [] }
     : bridge.readThread(threadId));

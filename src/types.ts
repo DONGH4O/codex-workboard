@@ -151,6 +151,7 @@ export interface BootstrapData {
     archived: number;
     lastSyncedAt: string | null;
     stale: boolean;
+    skipped: boolean;
     migratedTaskCount: number;
     archivedTaskCount: number;
   };
